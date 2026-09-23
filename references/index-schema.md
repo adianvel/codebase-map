@@ -36,8 +36,10 @@ renderer needs them.
     {
       "source": "concept id",
       "target": "concept id",
-      "kind": "calls|imports|stores|publishes|consumes|renders|tests",
+      "kind": "calls|imports|routes|reads|writes|stores|references|publishes|consumes|renders|tests",
       "summary": "why the relationship matters",
+      "via": ["key or join expression"],
+      "cardinality": "one-to-one|one-to-many|many-to-one|many-to-many|unknown",
       "evidence": ["path:line or path:symbol"],
       "confidence": "confirmed|inferred|unknown"
     }
@@ -57,3 +59,11 @@ renderer needs them.
 
 IDs are generated from the target repository's own concepts. They are not
 global vocabulary and must not be copied from an example repository.
+
+Represent database structure with evidence-backed concepts for tables,
+collections, or entities and relationships such as `references`, `reads`, and
+`writes`. For database relationships, put evidenced key or join expressions
+in `via` and cardinality from source to target in `cardinality`; use `unknown`
+when the repository cannot establish it. Omit these fields for relationships
+that do not model data links; older indexes may omit them too. Use `flows` for
+ordered behavior paths; use `relationships` for the data model.

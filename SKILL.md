@@ -1,14 +1,15 @@
 ---
 name: codebase-map
-description: Build a repository-grounded codebase index and an interactive monochrome visual map with connected architecture, user-flow, and evidence views. Use when someone asks to understand, map, visualize, tour, or explain how a repository works.
+description: Visualize a repository and answer its architecture, behavior, and data questions.
+disable-model-invocation: true
 ---
 
 # Codebase Map
 
-Turn an unfamiliar repository into two useful things:
+Turn an unfamiliar repository into:
 
 1. a compact index an agent can retrieve from before reading source files;
-2. an interactive, hand-drawn-style visual map a human can learn from.
+2. a visual answer to a broad architecture question or a specific question about how the repository works.
 
 The repository is the source of truth. Derive every concept, label, edge, and
 flow from repository evidence. Never carry domain nouns, IDs, or architecture
@@ -16,9 +17,31 @@ assumptions from another repository into this run.
 
 ## Preconditions
 
+Run this skill only when the user explicitly invokes `$codebase-map` (or the
+host's equivalent command). Once invoked, treat the question in the same
+request as the map's focus.
+
 If no repository is available, ask for a folder or path and stop. Read the
 repository's agent instructions before analysis. Keep production source and
 existing documentation unchanged unless the user explicitly asks otherwise.
+
+## Choose the view
+
+- With no focus question, create the general architecture overview and the
+  strongest evidence-backed end-to-end user flow.
+- With a focus question, make that question the title of the focused view and
+  trace the relevant code and data path.
+- Match the diagram form to the question: a user journey or sequence for
+  behavior, a data-flow for backend processing, an entity-relationship view
+  for database structure, and a component map for architecture. For database
+  views, show evidenced entities, key columns, and relationship cardinality.
+- For other questions, choose the simplest diagram that explains the relevant
+  evidence. A focus view may combine forms when that makes one answer clearer.
+- If several paths fit, show the strongest-supported path, label its scope, and
+  mention meaningful alternatives. Ask a clarifying question only when the
+  choice would materially change the diagram.
+- Show unsupported or inferred steps as such. Keep unknown relationships out
+  of confirmed paths and list the evidence gap.
 
 ## Artifact contract
 
@@ -33,8 +56,17 @@ reports/codebase-map/<repository-name>/
 ```
 
 `index.json` is the source of truth. `context.md` is the compact orientation
-layer. `architecture.html` is the human-facing interactive view. `evidence.md`
-records claims, sources, confidence, and gaps.
+layer. `architecture.html` contains the general overview and the latest
+focused view. Replace the previous focused view on a new question; keep the
+overview and avoid accumulating old answers. `evidence.md` records claims,
+sources, confidence, and gaps.
+
+For every run, return a Mermaid diagram inline: the architecture overview when
+there is no focus question, or the question-matched view when one is supplied.
+Follow it with a short caption and key source paths. Use `flowchart`,
+`sequenceDiagram`, or `erDiagram` to fit the question, using the same dark
+palette and highlighted path. Link the HTML report for the interactive map.
+Keep the index, context, and evidence artifacts available as support.
 
 Keep the report local and self-contained. Do not upload repository contents,
 load secrets, expose environment values, or add source-code download controls.
@@ -52,9 +84,11 @@ agent prompt:
 3. Identify runtime boundaries, entry points, routes, commands, workers,
    schemas, persistence, external services, tests, and deployment boundaries.
 4. Extract lightweight file, symbol, import, route, schema, and test facts.
-5. Trace the most central user-visible flow supported by evidence.
-6. Store the complete useful inventory in `index.json`; load only the compact
-   context and the relevant files/symbols when answering a later task.
+5. Trace the requested behavior or data structure from its entry point through
+   the relevant components. For an unfocused run, trace the strongest
+   user-visible flow.
+6. Store useful inventory and evidence in `index.json`; load only compact
+   context and relevant files or symbols when answering a later task.
 
 If the repository is large, group files by boundary and retrieve by concept,
 flow, file, symbol, or relationship. Do not make the agent read every file
@@ -74,37 +108,40 @@ domain IDs in the skill or the renderer.
 ## Visual contract
 
 Render every view from the same indexed graph of concepts, relationships,
-flows, and evidence. Use shared IDs across all views so the diagrams cannot
-drift apart.
+flows, and evidence. Use shared IDs across views so the diagrams cannot drift
+apart.
 
-The default visual language is black and white with a restrained hand-drawn
-feel:
+Use the visual language from the linked diagram reference:
 
-- white background, black text, thin black lines, and generous whitespace;
-- readable handwritten-style labels at normal weight;
-- subtle sketch imperfections on borders and paths, while text and arrows stay
-  crisp and readable;
-- use line weight, outlines, and patterns for selection or uncertainty instead
-  of bright colors;
-- no characters, decorative illustrations, gradients, dense legends, or giant
-  dependency hairballs;
-- short node labels; explanations belong in the detail panel.
+- dark charcoal canvas (`#17191D`) with slightly raised node surfaces
+  (`#22262B`);
+- clear off-white labels (`#E7EBF0`), muted secondary text (`#A3ABB6`), and
+  subdued slate connectors (`#626B77`);
+- one lime accent (`#C9F36B`) for the requested or selected path;
+- compact labeled boxes, directional arrows, and short captions;
+- system sans-serif for diagram labels and monospace for source paths;
+- use line weight and outlines as well as color to show the selected path, so
+  meaning remains clear without color alone.
+
+Keep the map itself prominent. Keep node labels short; place explanations and
+source paths in the detail panel. Captions should fit in one or two short
+sentences. Use enough contrast, visible keyboard focus, and responsive sizing.
 
 The HTML should provide:
 
-- an architecture overview;
-- the most useful end-to-end user flow;
-- grouped module/boundary exploration;
+- a general architecture overview with roughly 10–15 important concepts;
+- the latest question-focused diagram, or the strongest user flow when no
+  question was supplied;
+- grouped module or data boundaries;
 - search and progressive drill-down;
-- cross-highlighting when the same concept appears in multiple views;
+- cross-highlighting when a concept appears in multiple views;
 - a detail panel with purpose, relationships, plain-text evidence, and
   confidence;
 - a short “Start here” learning path.
 
 Every edge must have an intentional source and target from the shared graph.
-Selecting a concept in one view must highlight that same ID everywhere else.
-Keep the default overview to roughly 10–15 important concepts and reveal the
-rest through interaction.
+Selecting a concept in one view must highlight the same ID everywhere else and
+reveal its relevant file or symbol paths.
 
 ## Agent-facing context
 
@@ -126,8 +163,9 @@ repository or complete index into context by default.
 
 Record the current revision when Git is available. On refresh, compare the
 current inventory with the previous index, update affected summaries and
-relationships, remove stale claims, and report changed areas. A full scan is
-the fallback when no prior index or usable revision exists.
+relationships, remove stale claims, and report changed areas. Rebuild the
+focused view for the current question while preserving the general overview. A
+full scan is the fallback when no prior index or usable revision exists.
 
 ## Completion check
 
@@ -137,10 +175,12 @@ Before reporting completion, verify:
 - every material claim has evidence and confidence;
 - all visual views use the same concept IDs;
 - every edge points to a real concept;
-- the HTML is interactive, readable, monochrome, and self-contained;
+- the inline diagram and latest HTML focus answer the same question;
+- the HTML uses the dark canvas, compact boxes, directional arrows, highlighted
+  path, concise captions, and remains self-contained and readable;
 - no source-code download UI or secret value is present;
 - the generated context is compact enough to load before targeted retrieval;
 - production source files were not changed.
 
-Report the report path, revision, selected flow, indexed boundaries, changed
-areas, and known gaps.
+Report the report path, revision, focus question and diagram type, indexed
+boundaries, changed areas, and known gaps.

@@ -1,19 +1,20 @@
 # codebase-map
 
-Turn an unfamiliar repository into a compact agent context and a readable
-visual learning map.
+Turn an unfamiliar repository into a compact agent context and a visual map
+that answers questions about its structure, behavior, and data.
 
-> Repository-grounded codebase indexing | connected architecture and user-flow
-> views | black-and-white hand-drawn visual language | portable agent skill
+> Repository-grounded index | question-focused diagrams | interactive map |
+> evidence attached to every path
 
 ## What this is
 
-`codebase-map` is a reusable skill for agents that need to understand a
-repository before changing it. It scans the codebase locally, records evidence
-in a small structured index, and renders that index as connected visual views.
+`codebase-map` is a user-invoked skill for people who want to understand a
+repository visually. Invoke it with no question for a general overview, or name
+a question such as a user journey, backend request, or database structure.
+The skill traces the relevant source and answers with a diagram.
 
-The index is the source of truth. The visual map is a human-friendly view of
-the same graph, not a separate interpretation.
+The index is the source of truth. Inline diagrams and the interactive HTML map
+are views of the same evidence-backed graph.
 
 ## Who it is for
 
@@ -21,6 +22,7 @@ Good fit for:
 
 - developers onboarding to an unfamiliar codebase;
 - visual learners who understand systems faster through connected diagrams;
+- people asking how a user journey, backend request, or database is organized;
 - agents that need compact repository context before implementing changes;
 - teams that want architecture and user-flow documentation grounded in source;
 - codebases that need a repeatable map refreshed after changes.
@@ -35,7 +37,7 @@ Not a fit for:
 
 ## What it produces
 
-For a target repository, the skill creates:
+For a target repository, the skill creates or refreshes:
 
 ```text
 reports/codebase-map/<repository-name>/
@@ -45,35 +47,43 @@ reports/codebase-map/<repository-name>/
 └── evidence.md       # claims, sources, confidence, and gaps
 ```
 
-The HTML view includes an architecture overview, the most useful end-to-end
-user flow, grouped boundaries, progressive drill-down, cross-highlighting, and
-plain-text evidence such as `path/to/file.ts:42 — symbolName()`.
+The HTML view keeps the general architecture overview and the latest
+question-focused diagram. A new question replaces the previous focused view;
+the overview remains. The skill returns the selected diagram inline, with a
+short caption and source paths such as `path/to/file.ts:42`.
+
+User journeys and backend behavior use a journey, sequence, or data-flow view.
+Database questions use an entity-relationship view grounded in schema and query
+evidence, including keys and cardinality when the repository establishes them.
+Selecting a concept in HTML reveals its source files, symbols, relationships,
+and confidence.
 
 The repository is scanned locally, but the agent receives compact context and
 targeted source slices instead of the entire repository or entire index.
 
 ## Visual language
 
-The visual style is inspired by simple hand-drawn explanation diagrams:
+Use the dark, diagram-first style shown in
+[the reference post](https://x.com/Wattenberger/status/2102425299237720493):
 
-- white background;
-- thin black lines and black text;
-- generous whitespace;
-- readable handwritten-style labels at normal weight;
-- subtle sketch imperfections on borders and paths;
-- crisp text, arrows, and connections;
-- line weight, outlines, and patterns instead of bright colors;
-- no character, decorative illustration, gradient, or dense legend;
-- no giant dependency hairball in the default view.
+- charcoal canvas (`#17191D`) and compact raised boxes (`#22262B`);
+- clear off-white labels (`#E7EBF0`) and muted slate connectors (`#626B77`);
+- one lime accent (`#C9F36B`) to highlight the requested path;
+- directional arrows, short captions, and short labels;
+- system sans-serif for diagram text and monospace for source paths;
+- line weight and outlines reinforce the highlight so meaning does not rely on
+  color alone.
 
-The hand-drawn quality is restrained. It should feel human and approachable
-without reducing diagram accuracy or readability.
+Keep the selected path prominent and surrounding structure quiet. Keep the
+default overview to roughly 10–15 concepts; reveal the rest through search and
+selection rather than drawing every dependency at once.
 
 ## Example
 
-A small generic architecture can be represented like this:
+A question-focused view highlights the path that answers the user's question:
 
 ```mermaid
+%%{init: {"theme":"dark","themeVariables":{"background":"#17191D","fontFamily":"system-ui"}}}%%
 flowchart LR
     user["User"] --> web["Web App"]
     web --> api["API Layer"]
@@ -83,14 +93,18 @@ flowchart LR
     api --> worker["Background Worker"]
     worker --> external["External Service"]
 
-    classDef node fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
-    class user,web,api,core,db,worker,external node;
-    linkStyle default stroke:#111,stroke-width:1.5px;
+    classDef node fill:#22262B,stroke:#626B77,color:#E7EBF0;
+    classDef focus fill:#2B3223,stroke:#C9F36B,stroke-width:2px,color:#E7EBF0;
+    class user,web,api,core,db focus;
+    class worker,external node;
+    linkStyle 0,1,2,3 stroke:#C9F36B,stroke-width:2.5px;
 ```
 
-This Mermaid block is only a compact documentation example. The generated
-`architecture.html` is driven by the indexed graph, so architecture, user-flow,
-and evidence views reuse the same concept IDs and remain connected.
+The highlighted route answers the focus question; nearby systems stay visible
+as context.
+
+The generated `architecture.html` uses the same indexed graph, so the
+architecture overview, focused diagram, and evidence details stay connected.
 
 ## Installation
 
@@ -103,16 +117,16 @@ Copy the skill bundle into the skills directory supported by your agent:
     └── index-schema.md
 ```
 
-Then invoke it using the convention supported by your agent:
+The user must invoke it by name using the convention supported by the agent:
 
 ```text
 $codebase-map
 ```
 
-Natural requests work too:
+After invocation, include a natural-language question in the same request:
 
 ```text
-Map this repository and show me the main user flow.
+Use $codebase-map to show how a user request moves through the backend.
 ```
 
 The skill is designed to work across Codex, Claude Code, and other agents that
@@ -124,9 +138,9 @@ database, image-generation service, or parser package.
 Create a first map:
 
 ```text
-Use $codebase-map to explain this repository visually.
-Show the architecture, the main user-visible flow, important boundaries,
-and the files I should read first.
+Use $codebase-map to show how a user signs in.
+Trace the user journey through the frontend, backend, and database. Return the
+diagram inline and include the source paths in the interactive report.
 ```
 
 Refresh an existing map:
@@ -139,7 +153,7 @@ Highlight changed boundaries, stale relationships, and unresolved gaps.
 Retrieve context for implementation:
 
 ```text
-Use the codebase map to find the files and symbols involved in adding [change].
+Use $codebase-map to find the files and symbols involved in adding [change].
 Explain the relevant flow before proposing an implementation.
 ```
 
@@ -153,11 +167,13 @@ The skill follows this sequence:
 3. Identify entry points, routes, commands, workers, schemas, persistence,
    external services, tests, and deployment boundaries.
 4. Extract lightweight file, symbol, import, route, schema, and test facts.
-5. Trace the most central user-visible flow supported by evidence.
+5. If a question was supplied, select a diagram type and trace its relevant
+   behavior or data. Otherwise choose the strongest user-visible flow.
 6. Store facts, relationships, confidence, and evidence in `index.json`.
 7. Write compact `context.md` for fast agent orientation.
-8. Render connected architecture and flow views in `architecture.html`.
-9. Record unsupported or uncertain claims in `evidence.md`.
+8. Render the overview and latest focused view in `architecture.html`.
+9. Return the matching diagram inline with a short caption and key sources.
+10. Record unsupported or uncertain claims in `evidence.md`.
 
 On refresh, the skill uses the current Git revision when available, updates
 affected summaries and relationships, and removes stale claims instead of
@@ -167,6 +183,7 @@ silently preserving them.
 
 - one shared graph drives every diagram and explanation;
 - stable IDs keep repeated concepts connected across views and refreshes;
+- the user's question chooses the focused diagram and its level of detail;
 - evidence and confidence separate facts from architectural inference;
 - progressive disclosure keeps large repositories readable;
 - full local scanning does not mean full prompt injection;
@@ -196,7 +213,7 @@ indexing, evidence, stable IDs, and connected visual views.
 
 ## Notes
 
-- Keep labels short; place explanations in the detail panel.
+- Keep labels and captions short; place source paths in the detail panel.
 - Keep the default overview to roughly 10–15 important concepts.
 - Use plain-text evidence paths instead of embedding source-code viewers.
 - Do not add source-code download controls to the generated HTML.

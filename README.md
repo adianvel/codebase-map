@@ -96,7 +96,7 @@ Copy the skill bundle into the skills directory supported by your agent:
 ```text
 <agent-skills-directory>/codebase-map/
 ├── SKILL.md
-└── references/
+└── docs/
     └── index-schema.md
 ```
 
@@ -180,7 +180,7 @@ silently preserving them.
 ├── SKILL.md
 ├── README.md
 ├── LICENSE
-├── references/
+├── docs/
 │   └── index-schema.md
 └── examples/
     └── tiny-app/

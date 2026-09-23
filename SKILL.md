@@ -96,7 +96,7 @@ again just because the index contains every file.
 
 ## Index model
 
-Use the schema in [references/index-schema.md](references/index-schema.md).
+Use the schema in [docs/index-schema.md](docs/index-schema.md).
 Every material fact needs evidence and a confidence value: `confirmed`,
 `inferred`, or `unknown`. Keep `schemaVersion` in the index.
 

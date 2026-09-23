@@ -49,8 +49,8 @@ reports/codebase-map/<repository-name>/
 
 The HTML view keeps the general architecture overview and the latest
 question-focused diagram. A new question replaces the previous focused view;
-the overview remains. The skill returns the selected diagram inline, with a
-short caption and source paths such as `path/to/file.ts:42`.
+the overview remains. The skill returns the selected diagram inline with a
+short caption.
 
 User journeys and backend behavior use a journey, sequence, or data-flow view.
 Database questions use an entity-relationship view grounded in schema and query
@@ -61,30 +61,13 @@ and confidence.
 The repository is scanned locally, but the agent receives compact context and
 targeted source slices instead of the entire repository or entire index.
 
-## Visual language
-
-Use the dark, diagram-first style shown in
-[the reference post](https://x.com/Wattenberger/status/2102425299237720493):
-
-- charcoal canvas (`#17191D`) and compact raised boxes (`#22262B`);
-- clear off-white labels (`#E7EBF0`) and muted slate connectors (`#626B77`);
-- one lime accent (`#C9F36B`) to highlight the requested path;
-- directional arrows, short captions, and short labels;
-- system sans-serif for diagram text and monospace for source paths;
-- line weight and outlines reinforce the highlight so meaning does not rely on
-  color alone.
-
-Keep the selected path prominent and surrounding structure quiet. Keep the
-default overview to roughly 10–15 concepts; reveal the rest through search and
-selection rather than drawing every dependency at once.
-
 ## Example
 
 A question-focused view highlights the path that answers the user's question:
 
 ```mermaid
 %%{init: {"theme":"dark","themeVariables":{"background":"#17191D","fontFamily":"system-ui"}}}%%
-flowchart LR
+flowchart TB
     user["User"] --> web["Web App"]
     web --> api["API Layer"]
     api --> core["Core Logic"]

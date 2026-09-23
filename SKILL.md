@@ -127,6 +127,21 @@ Keep the map itself prominent. Keep node labels short; place explanations and
 source paths in the detail panel. Captions should fit in one or two short
 sentences. Use enough contrast, visible keyboard focus, and responsive sizing.
 
+### Fit and legibility
+
+- Include every node, arrow, label, and caption inside the diagram bounds; size
+  the SVG viewBox or canvas to the complete drawing.
+- Choose a horizontal or vertical layout to fit the available space. Reflow or
+  provide intentional pan and zoom on narrow screens so the primary path stays
+  visible.
+- Align nodes to a consistent grid with even spacing. Keep arrows attached to
+  their endpoints and route them clear of text; prevent collisions and overlap.
+- Let boxes grow or wrap labels instead of clipping text. Shorten canvas labels
+  and move extra detail into the selection panel; do not shrink the whole map
+  until it is hard to read.
+- Use consistent type sizes, weights, and line height with a clear hierarchy.
+  Keep diagram labels and captions readable at their rendered size.
+
 The HTML should provide:
 
 - a general architecture overview with roughly 10–15 important concepts;
@@ -178,6 +193,9 @@ Before reporting completion, verify:
 - the inline diagram and latest HTML focus answer the same question;
 - the HTML uses the dark canvas, compact boxes, directional arrows, highlighted
   path, concise captions, and remains self-contained and readable;
+- no node, edge, label, or caption is cut off, clipped, overlapped, or misaligned;
+- when a visual preview is available, inspect the diagram at normal and narrow
+  widths; otherwise check that the SVG or canvas bounds contain the full drawing;
 - no source-code download UI or secret value is present;
 - the generated context is compact enough to load before targeted retrieval;
 - production source files were not changed.

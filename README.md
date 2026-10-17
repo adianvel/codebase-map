@@ -49,21 +49,23 @@ reports/codebase-map/<repository-name>/
 
 The HTML view keeps the general architecture overview and the latest
 question-focused diagram. A new question replaces the previous focused view;
-the overview remains. The skill returns the selected diagram inline with a
-short caption.
+the overview remains. The skill returns the matching diagram inline with a
+short caption, and everything is rendered from
+[docs/report-template.html](docs/report-template.html), so the outline, the
+focused view, and the evidence details stay one connected graph rather than a
+picture of one.
 
-User journeys and backend behavior use a journey, sequence, or data-flow view.
-Database questions use an entity-relationship view grounded in schema and query
-evidence, including keys and cardinality when the repository establishes them.
-Selecting a concept in HTML reveals its source files, symbols, relationships,
-and confidence.
+Which diagram you get follows your question — a flow, sequence, or
+entity-relationship view, whichever makes the answer clearest.
 
 The repository is scanned locally, but the agent receives compact context and
 targeted source slices instead of the entire repository or entire index.
 
 ## Example
 
-A question-focused view highlights the path that answers the user's question:
+A question-focused view highlights the path that answers the user's question.
+Inline Mermaid needs literal colours, so these mirror the palette that
+[docs/report-template.html](docs/report-template.html) defines:
 
 ```mermaid
 %%{init: {"theme":"dark","themeVariables":{"background":"#17191D","fontFamily":"system-ui"}}}%%
@@ -96,8 +98,11 @@ Copy the skill bundle into the skills directory supported by your agent:
 ```text
 <agent-skills-directory>/codebase-map/
 ├── SKILL.md
-└── docs/
-    └── index-schema.md
+├── docs/
+│   ├── index-schema.md
+│   └── report-template.html
+└── scripts/
+    └── check-report.mjs
 ```
 
 The user must invoke it by name using the convention supported by the agent:
@@ -115,6 +120,10 @@ Use $codebase-map to show how a user request moves through the backend.
 The skill is designed to work across Codex, Claude Code, and other agents that
 support reusable repository skills. It does not require an MCP server, hosted
 database, image-generation service, or parser package.
+
+The report check ships as a zero-dependency Node script. CI runs it over the
+example report, and the agent runs it before finishing when a JavaScript runtime
+is available; mapping a repository does not require one.
 
 ## Usage
 
@@ -140,23 +149,12 @@ Use $codebase-map to find the files and symbols involved in adding [change].
 Explain the relevant flow before proposing an implementation.
 ```
 
-## Workflow
+## How a run works
 
-The skill follows this sequence:
-
-1. Read repository instructions, README files, manifests, and configuration.
-2. Inventory relevant files with explicit exclusions for dependencies, caches,
-   generated output, binaries, and secrets.
-3. Identify entry points, routes, commands, workers, schemas, persistence,
-   external services, tests, and deployment boundaries.
-4. Extract lightweight file, symbol, import, route, schema, and test facts.
-5. If a question was supplied, select a diagram type and trace its relevant
-   behavior or data. Otherwise choose the strongest user-visible flow.
-6. Store facts, relationships, confidence, and evidence in `index.json`.
-7. Write compact `context.md` for fast agent orientation.
-8. Render the overview and latest focused view in `architecture.html`.
-9. Return the matching diagram inline with a short caption and key sources.
-10. Record unsupported or uncertain claims in `evidence.md`.
+A run reads the repository's instructions and manifests, inventories tracked
+files, identifies the entry points, routes, schemas, and workers it finds, traces
+the flow your question names, then writes the four artifacts. `SKILL.md` owns the
+sequence and the contract; this is the summary.
 
 On refresh, the skill uses the current Git revision when available, updates
 affected summaries and relationships, and removes stale claims instead of
@@ -181,14 +179,27 @@ silently preserving them.
 ├── README.md
 ├── LICENSE
 ├── docs/
-│   └── index-schema.md
+│   ├── index-schema.md
+│   └── report-template.html
+├── scripts/
+│   └── check-report.mjs
+├── .github/
+│   └── workflows/
+│       └── check.yml
 └── examples/
     └── tiny-app/
         ├── README.md
         ├── handler.ts
         ├── repository.ts
         ├── database.ts
-        └── worker.ts
+        ├── worker.ts
+        └── reports/
+            └── codebase-map/
+                └── tiny-app/
+                    ├── index.json
+                    ├── context.md
+                    ├── architecture.html
+                    └── evidence.md
 ```
 
 The tiny fixture is intentionally domain-neutral. It exists to forward-test
@@ -196,12 +207,12 @@ indexing, evidence, stable IDs, and connected visual views.
 
 ## Notes
 
-- Keep labels and captions short; place source paths in the detail panel.
-- Keep the default overview to roughly 10–15 important concepts.
-- Use plain-text evidence paths instead of embedding source-code viewers.
-- Do not add source-code download controls to the generated HTML.
-- Add parser helpers or indexing services only when real repositories prove
-  that lightweight extraction is insufficient.
+The rules that used to be listed here — label length, the overview size target,
+the search threshold, plain-text evidence, the no-download rule, and when to add
+a parser helper — are stated once in `SKILL.md`, which owns the contract. The
+report's shape and palette live in `docs/report-template.html`, and
+`scripts/check-report.mjs` enforces the mechanical parts. CI runs that module over
+the example report on every push and pull request.
 
 ## License
 

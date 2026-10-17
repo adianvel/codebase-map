@@ -1,11 +1,19 @@
 # Tiny app fixture
 
-This deliberately generic fixture represents a small application boundary:
+This small TypeScript fixture demonstrates an asynchronous request path:
+handler → repository → database, with a worker event after successful reads.
 
-```text
-request → handler → repository → database
-                    └──────────→ worker
-```
+## Sample codebase-map output
 
-It contains no project-specific vocabulary. Use it to forward-test the skill's
-indexing, evidence, shared IDs, and connected visual views.
+The included [interactive report](reports/codebase-map/tiny-app/architecture.html)
+answers: “How does a request read a record?”
+
+It contains a repository overview, the focused request flow, and the evidence
+used to build each view:
+
+- [index.json](reports/codebase-map/tiny-app/index.json)
+- [context.md](reports/codebase-map/tiny-app/context.md)
+- [evidence.md](reports/codebase-map/tiny-app/evidence.md)
+
+The fixture has no database schema. The report calls that out instead of
+inventing tables or relationships.

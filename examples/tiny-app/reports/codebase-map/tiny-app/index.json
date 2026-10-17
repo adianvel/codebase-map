@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "repository": {
+    "name": "tiny-app",
+    "revision": null,
+    "generatedAt": "2026-09-23T17:18:25Z"
+  },
+  "files": [
+    {
+      "id": "file-handler",
+      "path": "handler.ts",
+      "kind": "source",
+      "summary": "Accepts a record request and returns a status with the record.",
+      "symbols": ["concept-handler"],
+      "evidence": ["handler.ts:3", "handler.ts:4", "handler.ts:5"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "file-repository",
+      "path": "repository.ts",
+      "kind": "source",
+      "summary": "Reads records and publishes a worker event after a successful read.",
+      "symbols": ["concept-repository"],
+      "evidence": ["repository.ts:5", "repository.ts:6", "repository.ts:7"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "file-database",
+      "path": "database.ts",
+      "kind": "source",
+      "summary": "Provides a fixture read function that returns a record for every id.",
+      "symbols": ["concept-database"],
+      "evidence": ["database.ts:2", "database.ts:3"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "file-worker",
+      "path": "worker.ts",
+      "kind": "source",
+      "summary": "Accepts and returns a record.read event.",
+      "symbols": ["concept-worker"],
+      "evidence": ["worker.ts:2", "worker.ts:3"],
+      "confidence": "confirmed"
+    }
+  ],
+  "concepts": [
+    {
+      "id": "concept-request",
+      "name": "Record request",
+      "summary": "Carries the requested record id into the handler.",
+      "ownerFileIds": ["file-handler"],
+      "evidence": ["handler.ts:3"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "concept-handler",
+      "name": "Request handler",
+      "summary": "Looks up the record and returns status 200 or 404.",
+      "ownerFileIds": ["file-handler"],
+      "evidence": ["handler.ts:3", "handler.ts:4", "handler.ts:5"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "concept-repository",
+      "name": "Repository",
+      "summary": "Reads from the database and conditionally publishes an event.",
+      "ownerFileIds": ["file-repository"],
+      "evidence": ["repository.ts:5", "repository.ts:6", "repository.ts:7"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "concept-database",
+      "name": "Fixture database",
+      "summary": "Returns a record for every requested id.",
+      "ownerFileIds": ["file-database"],
+      "evidence": ["database.ts:2", "database.ts:3"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "concept-worker",
+      "name": "Background worker",
+      "summary": "Receives the record.read event after a successful lookup.",
+      "ownerFileIds": ["file-worker"],
+      "evidence": ["repository.ts:7", "worker.ts:2"],
+      "confidence": "confirmed"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "concept-request",
+      "target": "concept-handler",
+      "kind": "routes",
+      "summary": "The request id enters handleRequest.",
+      "evidence": ["handler.ts:3"],
+      "confidence": "confirmed"
+    },
+    {
+      "source": "concept-handler",
+      "target": "concept-repository",
+      "kind": "calls",
+      "summary": "The handler looks up input.id with repository.find.",
+      "evidence": ["handler.ts:4"],
+      "confidence": "confirmed"
+    },
+    {
+      "source": "concept-repository",
+      "target": "concept-database",
+      "kind": "reads",
+      "summary": "The repository reads the record by id.",
+      "evidence": ["repository.ts:6", "database.ts:2"],
+      "confidence": "confirmed"
+    },
+    {
+      "source": "concept-repository",
+      "target": "concept-worker",
+      "kind": "publishes",
+      "summary": "A present record triggers a record.read event.",
+      "evidence": ["repository.ts:7"],
+      "confidence": "confirmed"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-record-read",
+      "name": "Read a record",
+      "steps": [
+        "concept-request",
+        "concept-handler",
+        "concept-repository",
+        "concept-database"
+      ],
+      "evidence": [
+        "handler.ts:3",
+        "handler.ts:4",
+        "repository.ts:6",
+        "database.ts:2"
+      ],
+      "confidence": "confirmed"
+    }
+  ],
+  "gaps": [
+    "The fixture has no tables, collections, keys, or database relationships to map.",
+    "The handler has a 404 branch, but database.read always returns a record in this fixture."
+  ]
+}

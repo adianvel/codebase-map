@@ -111,17 +111,27 @@ Render every view from the same indexed graph of concepts, relationships,
 flows, and evidence. Use shared IDs across views so the diagrams cannot drift
 apart.
 
-Use the visual language from the linked diagram reference:
+Start from [docs/report-template.html](docs/report-template.html) and fill its
+regions. It is the report contract: it carries the palette, the
+cross-highlighting, and one example of every element the completion check
+expects, so the shape is stated once rather than restated in prose.
 
-- dark charcoal canvas (`#17191D`) with slightly raised node surfaces
-  (`#22262B`);
-- clear off-white labels (`#E7EBF0`), muted secondary text (`#A3ABB6`), and
-  subdued slate connectors (`#626B77`);
-- one lime accent (`#C9F36B`) for the requested or selected path;
-- compact labeled boxes, directional arrows, and short captions;
-- system sans-serif for diagram labels and monospace for source paths;
-- use line weight and outlines as well as color to show the selected path, so
-  meaning remains clear without color alone.
+The regions are the report's required shape:
+
+- the architecture overview, with roughly 10–15 important concepts grouped by
+  module or data;
+- the focused view: the diagram that answers the question, or the strongest user
+  flow when no question was supplied;
+- the detail panel, with purpose, relationships, plain-text evidence, and
+  confidence for each concept;
+- the “Start here” learning path.
+
+Use the palette the template defines: a dark charcoal canvas with slightly
+raised node surfaces, clear off-white labels, muted secondary text, and subdued
+slate connectors, with one lime accent for the requested or selected path. Show
+that path with line weight and outlines as well as color, so meaning remains
+clear without color alone. Use compact labeled boxes, directional arrows, system
+sans-serif for diagram labels, and monospace for source paths.
 
 Keep the map itself prominent. Keep node labels short; place explanations and
 source paths in the detail panel. Captions should fit in one or two short
@@ -142,21 +152,13 @@ sentences. Use enough contrast, visible keyboard focus, and responsive sizing.
 - Use consistent type sizes, weights, and line height with a clear hierarchy.
   Keep diagram labels and captions readable at their rendered size.
 
-The HTML should provide:
-
-- a general architecture overview with roughly 10–15 important concepts;
-- the latest question-focused diagram, or the strongest user flow when no
-  question was supplied;
-- grouped module or data boundaries;
-- search and progressive drill-down;
-- cross-highlighting when a concept appears in multiple views;
-- a detail panel with purpose, relationships, plain-text evidence, and
-  confidence;
-- a short “Start here” learning path.
-
-Every edge must have an intentional source and target from the shared graph.
-Selecting a concept in one view must highlight the same ID everywhere else and
-reveal its relevant file or symbol paths.
+Every edge must have an intentional source and target from the shared graph. Add
+a search control once `index.json` holds more than ten concepts. Tag every
+diagram node and every detail entry with `data-concept-id`, carrying the
+concept's ID from `index.json`, and keep the `#detail-…` anchor for navigation.
+Selecting a concept must mark every element carrying that ID across the whole
+report, not only in the view it was selected in, and reveal its relevant file or
+symbol paths.
 
 ## Agent-facing context
 
@@ -184,19 +186,29 @@ full scan is the fallback when no prior index or usable revision exists.
 
 ## Completion check
 
-Before reporting completion, verify:
+The mechanical half of this check lives in one module. Run it when a JavaScript
+runtime is available, and fix what it reports before finishing:
 
-- the index is valid and has `schemaVersion`;
-- every material claim has evidence and confidence;
-- all visual views use the same concept IDs;
-- every edge points to a real concept;
-- the inline diagram and latest HTML focus answer the same question;
-- the HTML uses the dark canvas, compact boxes, directional arrows, highlighted
-  path, concise captions, and remains self-contained and readable;
-- no node, edge, label, or caption is cut off, clipped, overlapped, or misaligned;
-- when a visual preview is available, inspect the diagram at normal and narrow
-  widths; otherwise check that the SVG or canvas bounds contain the full drawing;
-- no source-code download UI or secret value is present;
+```text
+node scripts/check-report.mjs <report-dir>
+```
+
+It verifies that the report files exist, that `index.json` is valid and carries
+`schemaVersion`, that every material entry has evidence and confidence, that
+every relationship, flow step, owner, and diagram `data-concept-id` resolves to a
+real concept, that the report's palette matches `docs/report-template.html`, that
+a search control is present once the report exceeds ten concepts, that no
+source-code download control or secret-shaped literal appears, and that
+`context.md` stays within its budget.
+
+The rest needs judgement and cannot be decided from files:
+
+- the inline diagram and the latest HTML focus answer the same question;
+- the HTML uses the dark canvas, compact boxes, directional arrows, the
+  highlighted path, and concise captions;
+- the diagram form matches the question;
+- no node, edge, label, or caption is cut off, clipped, overlapped, or
+  misaligned, at normal or narrow widths;
 - the generated context is compact enough to load before targeted retrieval;
 - production source files were not changed.
 

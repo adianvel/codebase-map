@@ -12,5 +12,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Check the committed example report
-        run: node scripts/check-report.mjs examples/tiny-app/reports/codebase-map/tiny-app
+      - name: Run test suite
+        run: npm test

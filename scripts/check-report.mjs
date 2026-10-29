@@ -17,29 +17,30 @@
 
 import { readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
+export const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
 
-const CONFIDENCE = new Set(['confirmed', 'inferred', 'unknown'])
-const FILE_KIND = new Set(['source', 'test', 'config', 'docs', 'asset', 'generated'])
-const RELATIONSHIP_KIND = new Set([
+export const CONFIDENCE = new Set(['confirmed', 'inferred', 'unknown'])
+export const FILE_KIND = new Set(['source', 'test', 'config', 'docs', 'asset', 'generated'])
+export const RELATIONSHIP_KIND = new Set([
   'calls', 'imports', 'routes', 'reads', 'writes', 'stores',
   'references', 'publishes', 'consumes', 'renders', 'tests',
 ])
-const CARDINALITY = new Set([
+export const CARDINALITY = new Set([
   'one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'unknown',
 ])
 
 // A report earns a search control once its overview stops fitting on one
 // screen. SKILL.md targets 10–15 concepts for the overview; this takes the
 // lower bound rather than inventing a second number.
-const SEARCH_CONCEPT_THRESHOLD = 10
+export const SEARCH_CONCEPT_THRESHOLD = 10
 
 // context.md is the orientation layer, not the index. Keep it loadable whole.
-const MAX_CONTEXT_BYTES = 12 * 1024
+export const MAX_CONTEXT_BYTES = 12 * 1024
 
 // High-signal shapes only. The bare word "secret" is not evidence of a leak.
-const SECRET_PATTERNS = [
+export const SECRET_PATTERNS = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key block'],
   [/\bAKIA[0-9A-Z]{16}\b/, 'AWS access key id'],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/, 'GitHub token'],
@@ -47,112 +48,112 @@ const SECRET_PATTERNS = [
   [/\bsk-[A-Za-z0-9]{20,}\b/, 'API key'],
 ]
 
-const DOWNLOAD_ATTRIBUTE = /\sdownload(?=[\s/>=])/i
-const ARCHIVE_LINK = /href\s*=\s*"[^"]*\.(?:zip|tar|tgz|gz|rar|7z)"/i
-const SEARCH_CONTROL = /(?:type\s*=\s*"search"|role\s*=\s*"search"|class\s*=\s*"[^"]*search|id\s*=\s*"[^"]*search"|<input[^>]*\bsearch\b)/i
-const CONCEPT_MARKER = /\bdata-concept-id\s*=\s*"([^"]*)"/g
+export const DOWNLOAD_ATTRIBUTE = /\sdownload(?=[\s/>=])/i
+export const ARCHIVE_LINK = /href\s*=\s*"[^"]*\.(?:zip|tar|tgz|gz|rar|7z)"/i
+export const SEARCH_CONTROL = /(?:type\s*=\s*"search"|role\s*=\s*"search"|class\s*=\s*"[^"]*search|id\s*=\s*"[^"]*search"|<input[^>]*\bsearch\b)/i
+export const CONCEPT_MARKER = /\bdata-concept-id\s*=\s*"([^"]*)"/g
 
 // The report template is the single home for the palette. Compare against it so
 // a colour changed in one place cannot silently diverge from the others.
-const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta.url)
+export const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta.url)
 
-const errors = []
-
-function fail(message) {
-  errors.push(message)
-}
-
-function isPlainObject(value) {
+export function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function requireString(value, where) {
+function requireString(value, where, errors) {
   if (typeof value !== 'string' || value.trim() === '') {
-    fail(`${where} must be a non-empty string`)
+    errors.push(`${where} must be a non-empty string`)
     return false
   }
   return true
 }
 
-function requireArray(value, where) {
+function requireArray(value, where, errors) {
   if (!Array.isArray(value)) {
-    fail(`${where} must be an array`)
+    errors.push(`${where} must be an array`)
     return false
   }
   return true
 }
 
-function requireEvidenceAndConfidence(entry, where) {
-  if (requireArray(entry.evidence, `${where}.evidence`)) {
-    if (entry.evidence.length === 0) fail(`${where}.evidence is empty; every material entry needs a source`)
-    entry.evidence.forEach((item, i) => requireString(item, `${where}.evidence[${i}]`))
+function requireEvidenceAndConfidence(entry, where, errors) {
+  if (requireArray(entry.evidence, `${where}.evidence`, errors)) {
+    if (entry.evidence.length === 0) {
+      errors.push(`${where}.evidence is empty; every material entry needs a source`)
+    }
+    entry.evidence.forEach((item, i) => requireString(item, `${where}.evidence[${i}]`, errors))
   }
   if (!CONFIDENCE.has(entry.confidence)) {
-    fail(`${where}.confidence must be one of ${[...CONFIDENCE].join(', ')} (got ${JSON.stringify(entry.confidence)})`)
+    errors.push(`${where}.confidence must be one of ${[...CONFIDENCE].join(', ')} (got ${JSON.stringify(entry.confidence)})`)
   }
 }
 
-function checkIndex(index) {
+export function checkIndex(index, errors = []) {
   const fileIds = new Set()
   const conceptIds = new Set()
 
-  if (typeof index.schemaVersion !== 'number') fail('index.json is missing a numeric schemaVersion')
+  if (typeof index.schemaVersion !== 'number') {
+    errors.push('index.json is missing a numeric schemaVersion')
+  }
 
   if (!isPlainObject(index.repository)) {
-    fail('index.json.repository must be an object')
+    errors.push('index.json.repository must be an object')
   } else {
-    requireString(index.repository.name, 'index.json.repository.name')
+    requireString(index.repository.name, 'index.json.repository.name', errors)
   }
 
-  if (requireArray(index.files, 'index.json.files')) {
+  if (requireArray(index.files, 'index.json.files', errors)) {
     index.files.forEach((file, i) => {
       const where = `index.json.files[${i}]`
-      if (requireString(file.id, `${where}.id`)) fileIds.add(file.id)
-      requireString(file.path, `${where}.path`)
-      requireString(file.summary, `${where}.summary`)
+      if (requireString(file.id, `${where}.id`, errors)) fileIds.add(file.id)
+      requireString(file.path, `${where}.path`, errors)
+      requireString(file.summary, `${where}.summary`, errors)
       if (!FILE_KIND.has(file.kind)) {
-        fail(`${where}.kind must be one of ${[...FILE_KIND].join(', ')} (got ${JSON.stringify(file.kind)})`)
+        errors.push(`${where}.kind must be one of ${[...FILE_KIND].join(', ')} (got ${JSON.stringify(file.kind)})`)
       }
-      requireEvidenceAndConfidence(file, where)
-      if (requireArray(file.symbols, `${where}.symbols`) === false) return
+      requireEvidenceAndConfidence(file, where, errors)
+      if (requireArray(file.symbols, `${where}.symbols`, errors) === false) return
     })
   }
 
-  if (requireArray(index.concepts, 'index.json.concepts')) {
+  if (requireArray(index.concepts, 'index.json.concepts', errors)) {
     index.concepts.forEach((concept, i) => {
       const where = `index.json.concepts[${i}]`
-      if (requireString(concept.id, `${where}.id`)) conceptIds.add(concept.id)
-      requireString(concept.name, `${where}.name`)
-      requireString(concept.summary, `${where}.summary`)
-      requireEvidenceAndConfidence(concept, where)
+      if (requireString(concept.id, `${where}.id`, errors)) conceptIds.add(concept.id)
+      requireString(concept.name, `${where}.name`, errors)
+      requireString(concept.summary, `${where}.summary`, errors)
+      requireEvidenceAndConfidence(concept, where, errors)
     })
   }
 
-  if (requireArray(index.relationships, 'index.json.relationships')) {
+  if (requireArray(index.relationships, 'index.json.relationships', errors)) {
     index.relationships.forEach((relationship, i) => {
       const where = `index.json.relationships[${i}]`
-      requireString(relationship.summary, `${where}.summary`)
+      requireString(relationship.summary, `${where}.summary`, errors)
       if (!RELATIONSHIP_KIND.has(relationship.kind)) {
-        fail(`${where}.kind must be one of ${[...RELATIONSHIP_KIND].join(', ')} (got ${JSON.stringify(relationship.kind)})`)
+        errors.push(`${where}.kind must be one of ${[...RELATIONSHIP_KIND].join(', ')} (got ${JSON.stringify(relationship.kind)})`)
       }
       if ('cardinality' in relationship && !CARDINALITY.has(relationship.cardinality)) {
-        fail(`${where}.cardinality must be one of ${[...CARDINALITY].join(', ')} (got ${JSON.stringify(relationship.cardinality)})`)
+        errors.push(`${where}.cardinality must be one of ${[...CARDINALITY].join(', ')} (got ${JSON.stringify(relationship.cardinality)})`)
       }
-      requireEvidenceAndConfidence(relationship, where)
+      requireEvidenceAndConfidence(relationship, where, errors)
     })
   }
 
-  if (requireArray(index.flows, 'index.json.flows')) {
+  if (requireArray(index.flows, 'index.json.flows', errors)) {
     index.flows.forEach((flow, i) => {
       const where = `index.json.flows[${i}]`
-      requireString(flow.id, `${where}.id`)
-      requireString(flow.name, `${where}.name`)
-      requireArray(flow.steps, `${where}.steps`)
-      requireEvidenceAndConfidence(flow, where)
+      requireString(flow.id, `${where}.id`, errors)
+      requireString(flow.name, `${where}.name`, errors)
+      requireArray(flow.steps, `${where}.steps`, errors)
+      requireEvidenceAndConfidence(flow, where, errors)
     })
   }
 
-  if (!requireArray(index.gaps, 'index.json.gaps')) return { fileIds, conceptIds }
+  if (!requireArray(index.gaps, 'index.json.gaps', errors)) {
+    return { fileIds, conceptIds }
+  }
 
   // Second pass: now that every id is known, check that each reference resolves.
   if (Array.isArray(index.relationships)) {
@@ -161,7 +162,7 @@ function checkIndex(index) {
       for (const end of ['source', 'target']) {
         const id = relationship[end]
         if (typeof id !== 'string' || !conceptIds.has(id)) {
-          fail(`${where}.${end} "${id}" is not a concept id`)
+          errors.push(`${where}.${end} "${id}" is not a concept id`)
         }
       }
     })
@@ -172,7 +173,7 @@ function checkIndex(index) {
       if (!Array.isArray(flow.steps)) return
       flow.steps.forEach((step, j) => {
         if (typeof step !== 'string' || !conceptIds.has(step)) {
-          fail(`index.json.flows[${i}].steps[${j}] "${step}" is not a concept id`)
+          errors.push(`index.json.flows[${i}].steps[${j}] "${step}" is not a concept id`)
         }
       })
     })
@@ -183,7 +184,7 @@ function checkIndex(index) {
       if (!Array.isArray(concept.ownerFileIds)) return
       concept.ownerFileIds.forEach((fileId, j) => {
         if (typeof fileId !== 'string' || !fileIds.has(fileId)) {
-          fail(`index.json.concepts[${i}].ownerFileIds[${j}] "${fileId}" is not a file id`)
+          errors.push(`index.json.concepts[${i}].ownerFileIds[${j}] "${fileId}" is not a file id`)
         }
       })
     })
@@ -192,35 +193,35 @@ function checkIndex(index) {
   return { fileIds, conceptIds }
 }
 
-function checkHtml(html, conceptIds) {
+export function checkHtml(html, conceptIds, errors = []) {
   CONCEPT_MARKER.lastIndex = 0
   const markers = new Set()
   let match
   while ((match = CONCEPT_MARKER.exec(html)) !== null) markers.add(match[1])
 
   if (markers.size === 0) {
-    fail('architecture.html carries no data-concept-id; diagram nodes and detail entries must name their concept')
+    errors.push('architecture.html carries no data-concept-id; diagram nodes and detail entries must name their concept')
   }
 
   if (conceptIds) {
     for (const id of markers) {
       if (id === '') {
-        fail('architecture.html has an empty data-concept-id')
+        errors.push('architecture.html has an empty data-concept-id')
       } else if (!conceptIds.has(id)) {
-        fail(`architecture.html references concept "${id}", which is not in the index`)
+        errors.push(`architecture.html references concept "${id}", which is not in the index`)
       }
     }
     if (conceptIds.size > SEARCH_CONCEPT_THRESHOLD && !SEARCH_CONTROL.test(html)) {
-      fail(`architecture.html has ${conceptIds.size} concepts but no search control (required above ${SEARCH_CONCEPT_THRESHOLD})`)
+      errors.push(`architecture.html has ${conceptIds.size} concepts but no search control (required above ${SEARCH_CONCEPT_THRESHOLD})`)
     }
   }
 
   if (DOWNLOAD_ATTRIBUTE.test(html) || ARCHIVE_LINK.test(html)) {
-    fail('architecture.html offers a source-code download control; the report must stay read-only')
+    errors.push('architecture.html offers a source-code download control; the report must stay read-only')
   }
 }
 
-function paletteOf(html) {
+export function paletteOf(html) {
   const root = html.match(/:root\s*\{([\s\S]*?)\}/)
   if (!root) return null
   const vars = {}
@@ -230,33 +231,26 @@ function paletteOf(html) {
   return Object.keys(vars).length ? vars : null
 }
 
-async function checkPalette(reportHtml) {
-  let templateHtml
-  try {
-    templateHtml = await readFile(TEMPLATE_PATH, 'utf8')
-  } catch {
-    return
-  }
-
+export function checkPalette(reportHtml, templateHtml, errors = []) {
   const expected = paletteOf(templateHtml)
   if (!expected) return
 
   const actual = paletteOf(reportHtml)
   if (!actual) {
-    fail('architecture.html has no :root palette to compare against the report template')
+    errors.push('architecture.html has no :root palette to compare against the report template')
     return
   }
 
   for (const [name, value] of Object.entries(expected)) {
     if (!(name in actual)) {
-      fail(`architecture.html is missing palette variable ${name}; the template defines it as ${value}`)
+      errors.push(`architecture.html is missing palette variable ${name}; the template defines it as ${value}`)
     } else if (actual[name] !== value) {
-      fail(`architecture.html sets ${name} to ${actual[name]}; the template defines ${value}`)
+      errors.push(`architecture.html sets ${name} to ${actual[name]}; the template defines ${value}`)
     }
   }
 }
 
-async function checkSecrets(dir) {
+export async function checkSecrets(dir, errors = []) {
   for (const name of REQUIRED_FILES) {
     let contents
     try {
@@ -265,39 +259,32 @@ async function checkSecrets(dir) {
       continue
     }
     for (const [pattern, label] of SECRET_PATTERNS) {
-      if (pattern.test(contents)) fail(`${name} looks like it contains a ${label}`)
+      if (pattern.test(contents)) errors.push(`${name} looks like it contains a ${label}`)
     }
   }
 }
 
-async function checkContextBudget(dir, present) {
+export async function checkContextBudget(dir, present, errors = []) {
   if (!present['context.md']) return
   const info = await stat(join(dir, 'context.md'))
   if (info.size > MAX_CONTEXT_BYTES) {
-    fail(`context.md is ${info.size} bytes; the budget is ${MAX_CONTEXT_BYTES} so it stays loadable whole`)
+    errors.push(`context.md is ${info.size} bytes; the budget is ${MAX_CONTEXT_BYTES} so it stays loadable whole`)
   }
 }
 
-async function main() {
-  const target = process.argv[2]
-  if (!target) {
-    console.error('usage: node scripts/check-report.mjs <report-dir>')
-    process.exit(2)
-  }
-
+export async function checkReport(target, options = {}) {
   const dir = resolve(target)
   let info
   try {
     info = await stat(dir)
   } catch {
-    console.error(`report directory not found: ${dir}`)
-    process.exit(2)
+    return { ok: false, dir, fatal: true, errors: [`report directory not found: ${dir}`] }
   }
   if (!info.isDirectory()) {
-    console.error(`not a directory: ${dir}`)
-    process.exit(2)
+    return { ok: false, dir, fatal: true, errors: [`not a directory: ${dir}`] }
   }
 
+  const errors = []
   const present = {}
   for (const name of REQUIRED_FILES) {
     try {
@@ -305,7 +292,7 @@ async function main() {
       present[name] = true
     } catch {
       present[name] = false
-      fail(`missing report file: ${name}`)
+      errors.push(`missing report file: ${name}`)
     }
   }
 
@@ -315,37 +302,73 @@ async function main() {
     try {
       index = JSON.parse(raw)
     } catch (error) {
-      fail(`index.json is not valid JSON: ${error.message}`)
+      errors.push(`index.json is not valid JSON: ${error.message}`)
     }
   }
 
   let conceptIds = null
   if (index) {
     if (!isPlainObject(index)) {
-      fail('index.json must be an object')
+      errors.push('index.json must be an object')
     } else {
-      conceptIds = checkIndex(index).conceptIds
+      conceptIds = checkIndex(index, errors).conceptIds
     }
   }
 
   if (present['architecture.html']) {
     const html = await readFile(join(dir, 'architecture.html'), 'utf8')
-    checkHtml(html, conceptIds)
-    await checkPalette(html)
+    checkHtml(html, conceptIds, errors)
+
+    let templateHtml = options.templateHtml
+    if (templateHtml === undefined) {
+      const templatePath = options.templatePath || TEMPLATE_PATH
+      try {
+        templateHtml = await readFile(templatePath, 'utf8')
+      } catch {
+        templateHtml = null
+      }
+    }
+    if (templateHtml) {
+      checkPalette(html, templateHtml, errors)
+    }
   }
 
-  await checkSecrets(dir)
-  await checkContextBudget(dir, present)
+  await checkSecrets(dir, errors)
+  await checkContextBudget(dir, present, errors)
 
-  if (errors.length === 0) {
-    console.log(`report check passed: ${dir}`)
+  return {
+    ok: errors.length === 0,
+    dir,
+    errors,
+  }
+}
+
+export async function cli(args = process.argv.slice(2)) {
+  const target = args[0]
+  if (!target) {
+    console.error('usage: node scripts/check-report.mjs <report-dir>')
+    process.exit(2)
+  }
+
+  const result = await checkReport(target)
+
+  if (result.fatal) {
+    console.error(result.errors[0])
+    process.exit(2)
+  }
+
+  if (result.ok) {
+    console.log(`report check passed: ${result.dir}`)
     return
   }
 
-  console.error(`report check failed: ${dir}\n`)
-  for (const error of errors) console.error(`  x ${error}`)
-  console.error(`\n${errors.length} problem${errors.length === 1 ? '' : 's'}`)
+  console.error(`report check failed: ${result.dir}\n`)
+  for (const error of result.errors) console.error(`  x ${error}`)
+  console.error(`\n${result.errors.length} problem${result.errors.length === 1 ? '' : 's'}`)
   process.exit(1)
 }
 
-await main()
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isDirectRun) {
+  await cli()
+}

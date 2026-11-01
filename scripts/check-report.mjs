@@ -6,11 +6,13 @@
  *
  * This module owns the mechanical half of SKILL.md's completion check: the
  * invariants a file can decide. The other half — whether the focused view
- * answers the question, whether captions are concise, whether anything is
- * clipped — needs judgement and stays in SKILL.md as prose.
+ * answers the question, whether captions are concise, whether the diagram reads
+ * well — needs judgement and stays in SKILL.md as prose.
  *
  * The palette is compared against docs/report-template.html, which is its single
  * home, so a colour cannot silently diverge between the template and a report.
+ * The layout numbers come from docs/diagram-geometry.md, which is the one place
+ * that states them; here they only decide what a coordinate can decide.
  *
  * Zero dependencies, so it runs anywhere Node runs.
  */
@@ -216,7 +218,10 @@ export function checkHtml(html, conceptIds, errors = []) {
     }
   }
 
-  if (DOWNLOAD_ATTRIBUTE.test(html) || ARCHIVE_LINK.test(html)) {
+  // A comment is not a control: the template's contract text names the very
+  // things it forbids, so scan the markup the reader actually gets.
+  const markup = html.replace(/<!--[\s\S]*?-->/g, ' ')
+  if (DOWNLOAD_ATTRIBUTE.test(markup) || ARCHIVE_LINK.test(markup)) {
     errors.push('architecture.html offers a source-code download control; the report must stay read-only')
   }
 }
@@ -246,6 +251,296 @@ export function checkPalette(reportHtml, templateHtml, errors = []) {
       errors.push(`architecture.html is missing palette variable ${name}; the template defines it as ${value}`)
     } else if (actual[name] !== value) {
       errors.push(`architecture.html sets ${name} to ${actual[name]}; the template defines ${value}`)
+    }
+  }
+}
+
+// Layout numbers, stated in docs/diagram-geometry.md. GLYPH_ADVANCE_EM is the
+// average glyph advance of the template's font stack, which is what makes the
+// label budget match the text a browser actually draws.
+export const GLYPH_ADVANCE_EM = 0.54
+export const LABEL_INSET = 16
+export const CANVAS_PADDING = 20
+export const ARROW_TOLERANCE = 8
+export const FOOTPRINT_WIDTH = 132
+export const FOOTPRINT_HEIGHT = 100
+
+function attribute(el, name) {
+  const match = el.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))
+  return match ? match[1] : null
+}
+
+function numberAttribute(el, name) {
+  const raw = attribute(el, name)
+  if (raw === null) return NaN
+  const value = parseFloat(raw)
+  return Number.isFinite(value) ? value : NaN
+}
+
+function decodedText(raw) {
+  return raw.replace(/&(?:[a-z]+|#\d+|#[xX][0-9a-fA-F]+);/g, 'x')
+}
+
+// Read the size from the report's own CSS. A label whose size the report does
+// not state is a label the budget cannot be decided for, so it is skipped.
+function fontSizeFor(html, className) {
+  const rule = html.match(new RegExp(`\\.${className}\\s*\\{[^}]*font-size\\s*:\\s*([\\d.]+)px`))
+  return rule ? parseFloat(rule[1]) : null
+}
+
+function labelWidth(chars, fontSize) {
+  return chars * GLYPH_ADVANCE_EM * fontSize
+}
+
+function textExtent(text) {
+  const anchor = text.anchor || 'start'
+  const x = text.x
+  const width = labelWidth(text.content.length, text.fontSize)
+  if (anchor === 'middle') return { x1: x - width / 2, x2: x + width / 2 }
+  if (anchor === 'end') return { x1: x - width, x2: x }
+  return { x1: x, x2: x + width }
+}
+
+function viewBoxOf(svg) {
+  const viewBox = attribute(svg, 'viewBox')
+  if (!viewBox) return null
+  const parts = viewBox.trim().split(/[\s,]+/).map(Number)
+  if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return null
+  const [minX, minY, width, height] = parts
+  return { minX, minY, maxX: minX + width, maxY: minY + height, width, height }
+}
+
+function segmentsOf(d) {
+  const tokens = d.match(/[MLHVZmlhvz][^MLHVZmlhvz]*/g)
+  if (!tokens) return null
+  let cursorX = 0
+  let cursorY = 0
+  const segments = []
+  for (const token of tokens) {
+    const command = token[0]
+    if (command !== command.toUpperCase()) return null
+    if (command === 'Z') continue
+    const args = (token.slice(1).match(/-?\d*\.?\d+/g) || []).map(Number)
+    if (args.length === 0) return null
+    let x = cursorX
+    let y = cursorY
+    if (command === 'M' || command === 'L') {
+      ;[x, y] = args
+    } else if (command === 'H') {
+      x = args[0]
+    } else {
+      y = args[0]
+    }
+    // A moveto opens a subpath; it is not a drawn segment, so it cannot attach to
+    // or cross anything.
+    if (command !== 'M') {
+      segments.push({ x1: cursorX, y1: cursorY, x2: x, y2: y, axis: command })
+    }
+    cursorX = x
+    cursorY = y
+  }
+  return segments
+}
+
+function boxOf(rect) {
+  return {
+    x: numberAttribute(rect, 'x'),
+    y: numberAttribute(rect, 'y'),
+    width: numberAttribute(rect, 'width'),
+    height: numberAttribute(rect, 'height'),
+  }
+}
+
+function onBoundary(box, x, y) {
+  const within = (value, low, high) => value >= low - ARROW_TOLERANCE && value <= high + ARROW_TOLERANCE
+  const verticalSide = Math.abs(x - box.x) <= ARROW_TOLERANCE || Math.abs(x - (box.x + box.width)) <= ARROW_TOLERANCE
+  const horizontalSide = Math.abs(y - box.y) <= ARROW_TOLERANCE || Math.abs(y - (box.y + box.height)) <= ARROW_TOLERANCE
+  if (verticalSide && within(y, box.y, box.y + box.height)) return true
+  if (horizontalSide && within(x, box.x, box.x + box.width)) return true
+  return false
+}
+
+function crossesBox(x1, y1, x2, y2, box) {
+  const left = Math.min(x1, x2)
+  const right = Math.max(x1, x2)
+  const top = Math.min(y1, y2)
+  const bottom = Math.max(y1, y2)
+  const boxLeft = box.x
+  const boxRight = box.x + box.width
+  const boxTop = box.y
+  const boxBottom = box.y + box.height
+  const isHorizontal = Math.abs(y1 - y2) < 0.01
+  const isVertical = Math.abs(x1 - x2) < 0.01
+  if (isHorizontal) {
+    const y = y1
+    return y > boxTop && y < boxBottom && left < boxRight && right > boxLeft
+  }
+  if (isVertical) {
+    const x = x1
+    return x > boxLeft && x < boxRight && top < boxBottom && bottom > boxTop
+  }
+  return left < boxRight && right > boxLeft && top < boxBottom && bottom > boxTop
+}
+
+function parseDiagram(svg, html) {
+  const viewBox = viewBoxOf(svg)
+  const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
+  const nodes = []
+  const nodeBlocks = svg.match(/<a\b[\s\S]*?<\/a>/g) || []
+  for (const block of nodeBlocks) {
+    const rect = block.match(/<rect\b[^>]*class="[^"]*\btile\b[^"]*"[^>]*>/)
+    if (!rect) continue
+    // A node is a tile plus the label centred under it; the footprint, not the
+    // tile, is what edges attach to and what must not overlap.
+    const tile = boxOf(rect[0])
+    const centre = tile.x + tile.width / 2
+    const box = {
+      x: centre - FOOTPRINT_WIDTH / 2,
+      y: tile.y,
+      width: FOOTPRINT_WIDTH,
+      height: FOOTPRINT_HEIGHT,
+      tile,
+    }
+    box.labels = []
+    for (const match of block.matchAll(/<text\b[^>]*class="[^"]*\bnode-(title|subtitle)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
+      const kind = `node-${match[1]}`
+      const fontSize = fontSizeFor(html, kind)
+      if (fontSize === null) continue
+      box.labels.push({ kind: match[1], chars: decodedText(match[2]).length, fontSize })
+    }
+    nodes.push(box)
+  }
+
+  const edges = []
+  for (const match of svg.matchAll(/<path\b[^>]*class="[^"]*\bedge-[^"]*"[^>]*/g)) {
+    const d = attribute(match[0], 'd')
+    if (!d) continue
+    edges.push({ d, segments: segmentsOf(d) })
+  }
+
+  const labels = []
+  for (const match of svg.matchAll(/<text\b[^>]*class="[^"]*\b(edge-label|boundary-label)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
+    const kind = match[1]
+    const fontSize = fontSizeFor(html, kind)
+    if (fontSize === null) continue
+    labels.push({
+      content: decodedText(match[2]),
+      fontSize,
+      x: numberAttribute(match[0], 'x'),
+      y: numberAttribute(match[0], 'y'),
+      anchor: attribute(match[0], 'text-anchor') || 'start',
+      kind,
+    })
+  }
+
+  return { viewBox, name: title ? title[1].trim() : 'diagram', nodes, edges, labels }
+}
+
+export function checkLayout(html, errors = []) {
+  const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
+  if (diagrams.length === 0) return
+
+  for (const svg of diagrams) {
+    const { viewBox, name, nodes, edges, labels } = parseDiagram(svg, html)
+    if (!viewBox) {
+      errors.push(`${name}: diagram has no parsable viewBox; the fit rules need bounds`)
+      continue
+    }
+    // A diagram whose nodes the parser cannot see would pass every rule below
+    // by accident, so say so rather than reporting a clean picture.
+    if (nodes.length === 0 && /class="[^"]*\bdiagram-node\b/.test(svg)) {
+      errors.push(`${name}: diagram has diagram nodes but no <rect class="tile">; the node shape in docs/diagram-geometry.md is what the fit rules measure`)
+      continue
+    }
+
+    const fits = (x1, x2, y1, y2, what) => {
+      if (x1 < viewBox.minX + CANVAS_PADDING || x2 > viewBox.maxX - CANVAS_PADDING
+        || y1 < viewBox.minY + CANVAS_PADDING || y2 > viewBox.maxY - CANVAS_PADDING) {
+        errors.push(`${name}: ${what} runs past the viewBox padding; every element needs ${CANVAS_PADDING}px of margin inside 0 0 ${viewBox.width} ${viewBox.height}`)
+      }
+    }
+
+    for (const node of nodes) {
+      fits(node.x, node.x + node.width, node.y, node.y + node.height, `node at x=${node.x} y=${node.y}`)
+      for (const label of node.labels) {
+        const budget = Math.floor((node.width - LABEL_INSET) / (GLYPH_ADVANCE_EM * label.fontSize))
+        if (label.chars > budget) {
+          errors.push(`${name}: node at x=${node.x} gives ${label.kind} ${budget} characters at ${label.fontSize}px but holds ${label.chars}; shorten the label or move the detail to the evidence panel`)
+        }
+        const width = labelWidth(label.chars, label.fontSize)
+        const centre = node.x + node.width / 2
+        fits(centre - width / 2, centre + width / 2, node.y, node.y + node.height, `${label.kind} text`)
+      }
+    }
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i]
+        const b = nodes[j]
+        const overlaps = a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+        if (overlaps) {
+          errors.push(`${name}: nodes at x=${a.x} y=${a.y} and x=${b.x} y=${b.y} overlap`)
+        }
+      }
+    }
+
+    for (const label of labels) {
+      const { x1, x2 } = textExtent(label)
+      fits(x1, x2, label.y - label.fontSize, label.y, `${label.kind} "${label.content}"`)
+      for (const node of nodes) {
+        const clearsVertically = label.y <= node.y || label.y - label.fontSize >= node.y + node.height
+        const clearsHorizontally = x2 <= node.x || x1 >= node.x + node.width
+        if (!clearsVertically && !clearsHorizontally) {
+          errors.push(`${name}: label "${label.content}" sits on top of the node at x=${node.x} y=${node.y}`)
+        }
+      }
+    }
+
+    if (nodes.length < 2) continue
+
+    for (const edge of edges) {
+      if (!edge.segments || edge.segments.length === 0) continue
+      const start = edge.segments[0]
+      const finish = edge.segments[edge.segments.length - 1]
+      const hasSource = nodes.some(node => onBoundary(node, start.x1, start.y1))
+      const hasTarget = nodes.some(node => onBoundary(node, finish.x2, finish.y2))
+      if (!hasSource || !hasTarget) {
+        const missing = [!hasSource && 'source', !hasTarget && 'target'].filter(Boolean).join(' and ')
+        errors.push(`${name}: edge "${edge.d}" is not attached to a node boundary at the ${missing}`)
+      }
+
+      for (const segment of edge.segments) {
+        const shrink = ARROW_TOLERANCE
+        const dx = segment.x2 - segment.x1
+        const dy = segment.y2 - segment.y1
+        const shorten = (axis) => {
+          if (axis === 'M' || axis === 'L') {
+            const length = Math.hypot(dx, dy)
+            if (length <= shrink * 2) return null
+            const ux = dx / length
+            const uy = dy / length
+            return {
+              x1: segment.x1 + ux * shrink, y1: segment.y1 + uy * shrink,
+              x2: segment.x2 - ux * shrink, y2: segment.y2 - uy * shrink,
+            }
+          }
+          if (Math.abs(dx) < 0.01) {
+            if (Math.abs(dy) <= shrink * 2) return null
+            const sign = dy > 0 ? 1 : -1
+            return { x1: segment.x1, y1: segment.y1 + sign * shrink, x2: segment.x2, y2: segment.y2 - sign * shrink }
+          }
+          if (Math.abs(dx) <= shrink * 2) return null
+          const sign = dx > 0 ? 1 : -1
+          return { x1: segment.x1 + sign * shrink, y1: segment.y1, x2: segment.x2 - sign * shrink, y2: segment.y2 }
+        }
+        const inner = shorten(segment.axis)
+        if (!inner) continue
+        for (const node of nodes) {
+          if (crossesBox(inner.x1, inner.y1, inner.x2, inner.y2, node)) {
+            errors.push(`${name}: edge "${edge.d}" runs through the node at x=${node.x} y=${node.y}; connect footprint boundaries, never across a node`)
+          }
+        }
+      }
     }
   }
 }
@@ -318,6 +613,7 @@ export async function checkReport(target, options = {}) {
   if (present['architecture.html']) {
     const html = await readFile(join(dir, 'architecture.html'), 'utf8')
     checkHtml(html, conceptIds, errors)
+    checkLayout(html, errors)
 
     let templateHtml = options.templateHtml
     if (templateHtml === undefined) {

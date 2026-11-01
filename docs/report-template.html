@@ -12,32 +12,40 @@
     3. the required regions, one per diagram, plus the detail panel.
 
   scripts/check-report.mjs enforces the mechanical parts: the palette matches
-  this file, every data-concept-id resolves to a concept in index.json, a search
-  control exists above ten concepts, no download control and no secret.
+  this file, the diagrams obey the coordinates in docs/diagram-geometry.md, every
+  data-concept-id resolves to a concept in index.json, a search control exists
+  above ten concepts, no download control and no secret.
 
   Anything the check cannot decide — whether the focused view answers the
-  question, whether captions are concise, whether anything is clipped — is a
-  judgement call in SKILL.md.
+  question, whether captions are concise, whether the map reads well at a narrow
+  width — is a judgement call in SKILL.md.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light">
   <title>{{repository name}} — Codebase map</title>
   <style>
     :root {
-      color-scheme: dark;
-      --canvas: #17191d;
-      --surface: #22262b;
-      --surface-raised: #292e35;
-      --text: #e7ebf0;
-      --muted: #a3abb6;
-      --line: #626b77;
-      --line-soft: #3a414b;
-      --focus: #c9f36b;
-      --focus-wash: #2b3223;
+      color-scheme: light;
+      --canvas: #f6f7f9;
+      --paper: #ffffff;
+      --rule: #e4e8ee;
+      --surface: #ffffff;
+      --surface-raised: #f2f4f7;
+      --text: #1b2028;
+      --muted: #5d6773;
+      --line: #8a94a3;
+      --line-soft: #dfe3e9;
+      --focus: #4d7c0f;
+      --focus-ink: #3c620b;
+      --focus-wash: #f0f6e2;
+      --group-wash: #eef2f7;
+      --group-line: #cfd8e4;
       --radius: 10px;
+      --tile-radius: 12px;
+      --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--canvas);
       color: var(--text);
@@ -48,16 +56,14 @@
     body {
       margin: 0;
       min-width: 320px;
-      background:
-        radial-gradient(ellipse at 50% -20%, #272d34 0, transparent 52rem),
-        var(--canvas);
+      background: var(--canvas);
       color: var(--text);
       font-size: 15px;
       line-height: 1.55;
     }
 
-    a { color: var(--focus); text-underline-offset: 3px; }
-    a:hover { color: #e0ff9b; }
+    a { color: var(--focus-ink); text-underline-offset: 3px; }
+    a:hover { color: var(--focus); }
     a:focus-visible, summary:focus-visible {
       outline: 2px solid var(--focus);
       outline-offset: 4px;
@@ -98,7 +104,7 @@
       place-items: center;
       border: 1px solid var(--line);
       border-radius: 7px;
-      color: var(--focus);
+      color: var(--focus-ink);
       font-size: 17px;
     }
 
@@ -180,25 +186,33 @@
       padding: 6px 10px;
       border: 1px solid var(--line-soft);
       border-radius: 999px;
-      background: #1b1e23;
+      background: var(--canvas);
       color: var(--text);
       font-size: 12px;
     }
 
+    /* Graph paper: the map is a drawing, so it gets its own field. */
     .diagram-scroll {
+      width: fit-content;
       max-width: 100%;
+      margin-inline: auto;
       overflow-x: auto;
       overscroll-behavior-inline: contain;
-      border: 1px solid #303640;
+      border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: #1b1e23;
-      scrollbar-color: #555e69 #1b1e23;
+      background-color: var(--canvas);
+      background-image:
+        linear-gradient(var(--rule) 1px, transparent 1px),
+        linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+      background-size: 24px 24px;
+      scrollbar-color: var(--line) var(--canvas);
     }
 
+    /* One viewBox unit is one CSS pixel: the geometry file's numbers are what
+       the reader sees, and a map too wide for the screen scrolls instead of
+       shrinking its type. */
     .diagram {
       display: block;
-      width: 100%;
-      min-width: 760px;
       height: auto;
     }
 
@@ -215,91 +229,121 @@
     }
 
     .boundary {
-      fill: #1d2126;
-      stroke: #424a55;
+      fill: var(--group-wash);
+      fill-opacity: .55;
+      stroke: var(--group-line);
       stroke-width: 1.2;
     }
 
     .boundary-label {
-      fill: #a3abb6;
+      fill: var(--muted);
+      font-family: var(--mono);
       font-size: 12px;
       font-weight: 550;
+      letter-spacing: .04em;
+      text-transform: uppercase;
     }
 
-    .node {
-      fill: #22262b;
-      stroke: #626b77;
+    /* A node is a tile with its label centred below it. The tile carries a
+       two-letter kind code, never a logo: RT route, FN function, DB store,
+       WN worker, CF config, TS test, UI view, EX external. Those are labels,
+       not logos, and none goes in unless the evidence backs it. */
+    .tile {
+      fill: var(--paper);
+      stroke: var(--line);
       stroke-width: 1.4;
     }
 
-    .node-focus {
-      fill: #2b3223;
-      stroke: #c9f36b;
-      stroke-width: 1.8;
+    .tile-focus {
+      fill: var(--focus-wash);
+      stroke: var(--focus);
+      stroke-width: 2;
     }
 
-    .node-muted {
-      fill: #22262b;
-      stroke: #626b77;
-      stroke-width: 1.3;
+    .tile-muted {
+      stroke-dasharray: 4 4;
     }
 
-    .node-title {
-      fill: #e7ebf0;
-      font-size: 14px;
+    .tile-mark {
+      fill: var(--muted);
+      font-family: var(--mono);
+      font-size: 15px;
       font-weight: 600;
+      letter-spacing: .06em;
+    }
+
+    .diagram-node .tile-focus ~ .tile-mark { fill: var(--focus-ink); }
+
+    /* Labels sit on the paper under their tile; the halo keeps them readable
+       where a grid rule or an edge would otherwise run through them. */
+    .node-title {
+      fill: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      paint-order: stroke;
+      stroke: var(--canvas);
+      stroke-width: 4px;
+      stroke-linejoin: round;
     }
 
     .node-subtitle {
-      fill: #a3abb6;
+      fill: var(--muted);
+      font-family: var(--mono);
       font-size: 11px;
       font-weight: 450;
+      paint-order: stroke;
+      stroke: var(--canvas);
+      stroke-width: 4px;
+      stroke-linejoin: round;
     }
 
     .edge-focus {
       fill: none;
-      stroke: #c9f36b;
-      stroke-width: 2.3;
+      stroke: var(--focus);
+      stroke-width: 2.2;
     }
 
     .edge-muted {
       fill: none;
-      stroke: #626b77;
-      stroke-width: 1.7;
+      stroke: var(--line);
+      stroke-width: 1.6;
       stroke-dasharray: 5 5;
     }
 
     .edge-label {
-      fill: #a3abb6;
+      fill: var(--muted);
+      font-family: var(--mono);
       font-size: 11px;
       font-weight: 520;
+      paint-order: stroke;
+      stroke: var(--canvas);
+      stroke-width: 4px;
+      stroke-linejoin: round;
     }
 
-    .edge-label-focus { fill: #d5f69b; }
+    .edge-label-focus { fill: var(--focus-ink); }
 
     .diagram-node { cursor: pointer; }
 
-    .diagram-node:hover .node-focus,
-    .diagram-node:hover .node-muted,
-    .diagram-node:focus .node-focus,
-    .diagram-node:focus .node-muted {
-      stroke: #e7ebf0;
+    .diagram-node:hover .tile,
+    .diagram-node:focus .tile {
+      stroke: var(--text);
       stroke-width: 2.2;
     }
 
     .diagram-node:focus { outline: none; }
 
-    .diagram-node.is-selected .node-focus,
-    .diagram-node.is-selected .node-muted,
-    .diagram-node.is-selected:hover .node-focus,
-    .diagram-node.is-selected:hover .node-muted {
-      stroke: #ffffff;
-      stroke-width: 2.6;
+    .diagram-node.is-selected .tile {
+      stroke: var(--focus-ink);
+      stroke-width: 2.8;
     }
 
-    .diagram-node.is-selected .node-title { fill: #ffffff; }
+    .diagram-node.is-selected .node-title { fill: var(--focus-ink); }
 
-    details.is-selected { border-color: var(--focus); }
+    details.is-selected {
+      border-color: var(--focus);
+      background: var(--focus-wash);
+    }
 
     .caption {
       margin: 12px 2px 0;
@@ -324,7 +368,7 @@
       min-width: 0;
       padding: 13px 14px;
       border-left: 2px solid var(--line);
-      background: #1d2126;
+      background: var(--surface-raised);
     }
 
     .step:first-child { border-left-color: var(--focus); }
@@ -337,7 +381,7 @@
     }
 
     .step code, code, .source {
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-family: var(--mono);
       font-size: .9em;
     }
 
@@ -370,7 +414,7 @@
     details {
       border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: #1d2126;
+      background: var(--canvas);
     }
 
     summary {
@@ -410,7 +454,7 @@
       padding: 12px 14px;
       border-left: 2px solid var(--focus);
       background: var(--focus-wash);
-      color: #d7e4c0;
+      color: var(--focus-ink);
       font-size: 13px;
     }
 
@@ -454,11 +498,11 @@
     <!-- REGION topbar: repository name, revision, and when the report was generated. -->
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">⌘</span>
+        <span class="brand-mark" aria-hidden="true">&#8984;</span>
         <span>Codebase map</span>
         <span class="repo-name">/ {{repository name}}</span>
       </div>
-      <div class="meta">{{generatedAt}} · revision {{revision or "unavailable"}}</div>
+      <div class="meta">{{generatedAt}} &middot; revision {{revision or "unavailable"}}</div>
     </header>
 
     <main>
@@ -474,7 +518,10 @@
            grouped by module or data boundary. Keep untracked context visible but
            muted; the requested route stays the only focus-coloured path.
            Repeat the <a class="diagram-node"> block once per concept and give it
-           data-concept-id="<the concept id from index.json>". -->
+           data-concept-id="<the concept id from index.json>".
+           Coordinates follow docs/diagram-geometry.md: a 60x60 tile centred on its
+           column, its label 78px below the tile top, a node footprint of 132x100,
+           columns 180 apart, rows 160 apart, the canvas is 180xcolumns+60 wide, 240 per row band. -->
       <section class="section" aria-labelledby="overview-title">
         <div class="section-heading">
           <div>
@@ -485,28 +532,56 @@
         </div>
 
         <div class="diagram-scroll" tabindex="0" role="region" aria-label="Scrollable architecture overview diagram">
-          <svg class="diagram" viewBox="0 0 1040 280" role="group" aria-labelledby="overview-svg-title overview-svg-desc">
+          <svg class="diagram" viewBox="0 0 600 400" width="600" height="400" role="group" aria-labelledby="overview-svg-title overview-svg-desc">
             <title id="overview-svg-title">{{overview title for screen readers}}</title>
             <desc id="overview-svg-desc">{{overview description for screen readers}}</desc>
             <defs>
               <marker id="overview-arrow-focus" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
-                <path d="M0,0 L7,3.5 L0,7 Z" fill="#c9f36b"></path>
+                <path d="M0,0 L7,3.5 L0,7 Z" fill="#4d7c0f"></path>
               </marker>
               <marker id="overview-arrow-muted" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
-                <path d="M0,0 L7,3.5 L0,7 Z" fill="#626b77"></path>
+                <path d="M0,0 L7,3.5 L0,7 Z" fill="#8a94a3"></path>
               </marker>
             </defs>
 
-            <rect class="boundary" x="22" y="26" width="170" height="228" rx="10"></rect>
-            <text class="boundary-label" x="38" y="50">{{group label}}</text>
+            <rect class="boundary" x="218" y="40" width="344" height="326" rx="10"></rect>
+            <text class="boundary-label" x="234" y="64">{{group label}}</text>
 
-            <path class="edge-focus" d="M164 132 H238" marker-end="url(#overview-arrow-focus)"></path>
-            <text class="edge-label edge-label-focus" x="195" y="120" text-anchor="middle">{{edge label}}</text>
+            <path class="edge-focus" d="M186 120 H234" marker-end="url(#overview-arrow-focus)"></path>
+            <text class="edge-label edge-label-focus" x="210" y="108" text-anchor="middle">{{transport}}</text>
+
+            <path class="edge-muted" d="M366 120 H414" marker-end="url(#overview-arrow-muted)"></path>
+            <text class="edge-label" x="390" y="108" text-anchor="middle">{{read}}</text>
+
+            <path class="edge-muted" d="M300 190 V250" marker-end="url(#overview-arrow-muted)"></path>
+            <text class="edge-label" x="316" y="224">{{write}}</text>
 
             <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
-              <rect class="node-focus" x="38" y="100" width="126" height="64" rx="8"></rect>
-              <text class="node-title" x="101" y="128" text-anchor="middle">{{concept name}}</text>
-              <text class="node-subtitle" x="101" y="148" text-anchor="middle">{{symbol or path}}</text>
+              <rect class="tile tile-focus" x="90" y="90" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="120" y="127" text-anchor="middle">{{RT}}</text>
+              <text class="node-title" x="120" y="168" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="120" y="186" text-anchor="middle">{{symbol or path}}</text>
+            </a>
+
+            <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
+              <rect class="tile tile-focus" x="270" y="90" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="300" y="127" text-anchor="middle">{{FN}}</text>
+              <text class="node-title" x="300" y="168" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="300" y="186" text-anchor="middle">{{symbol or path}}</text>
+            </a>
+
+            <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
+              <rect class="tile tile-muted" x="450" y="90" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="480" y="127" text-anchor="middle">{{CF}}</text>
+              <text class="node-title" x="480" y="168" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="480" y="186" text-anchor="middle">{{symbol or path}}</text>
+            </a>
+
+            <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
+              <rect class="tile tile-muted" x="270" y="250" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="300" y="287" text-anchor="middle">{{DB}}</text>
+              <text class="node-title" x="300" y="328" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="300" y="346" text-anchor="middle">{{symbol or path}}</text>
             </a>
           </svg>
         </div>
@@ -528,25 +603,33 @@
         </div>
 
         <div class="diagram-scroll" tabindex="0" role="region" aria-label="Scrollable focused diagram">
-          <svg class="diagram" viewBox="0 0 1040 280" role="group" aria-labelledby="flow-svg-title flow-svg-desc">
+          <svg class="diagram" viewBox="0 0 420 240" width="420" height="240" role="group" aria-labelledby="flow-svg-title flow-svg-desc">
             <title id="flow-svg-title">{{focused title for screen readers}}</title>
             <desc id="flow-svg-desc">{{focused description for screen readers}}</desc>
             <defs>
               <marker id="flow-arrow-focus" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
-                <path d="M0,0 L7,3.5 L0,7 Z" fill="#c9f36b"></path>
+                <path d="M0,0 L7,3.5 L0,7 Z" fill="#4d7c0f"></path>
               </marker>
               <marker id="flow-arrow-muted" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
-                <path d="M0,0 L7,3.5 L0,7 Z" fill="#626b77"></path>
+                <path d="M0,0 L7,3.5 L0,7 Z" fill="#8a94a3"></path>
               </marker>
             </defs>
 
-            <path class="edge-focus" d="M180 132 H245" marker-end="url(#flow-arrow-focus)"></path>
-            <text class="edge-label edge-label-focus" x="212" y="119" text-anchor="middle">{{edge label}}</text>
+            <path class="edge-focus" d="M186 120 H234" marker-end="url(#flow-arrow-focus)"></path>
+            <text class="edge-label edge-label-focus" x="210" y="108" text-anchor="middle">{{transport}}</text>
 
             <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
-              <rect class="node-focus" x="40" y="100" width="140" height="64" rx="8"></rect>
-              <text class="node-title" x="110" y="128" text-anchor="middle">{{concept name}}</text>
-              <text class="node-subtitle" x="110" y="148" text-anchor="middle">{{symbol or path}}</text>
+              <rect class="tile tile-focus" x="90" y="90" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="120" y="127" text-anchor="middle">{{RT}}</text>
+              <text class="node-title" x="120" y="168" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="120" y="186" text-anchor="middle">{{symbol or path}}</text>
+            </a>
+
+            <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
+              <rect class="tile tile-focus" x="270" y="90" width="60" height="60" rx="12"></rect>
+              <text class="tile-mark" x="300" y="127" text-anchor="middle">{{FN}}</text>
+              <text class="node-title" x="300" y="168" text-anchor="middle">{{concept name}}</text>
+              <text class="node-subtitle" x="300" y="186" text-anchor="middle">{{symbol or path}}</text>
             </a>
           </svg>
         </div>
@@ -594,7 +677,7 @@
       </section>
 
       <footer class="footer">
-        <span>Evidence-backed map · no source was uploaded</span>
+        <span>Evidence-backed map &middot; no source was uploaded</span>
         <nav class="footer-links" aria-label="Report files">
           <a href="index.json">Index</a>
           <a href="context.md">Context</a>

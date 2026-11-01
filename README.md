@@ -68,7 +68,7 @@ Inline Mermaid needs literal colours, so these mirror the palette that
 [docs/report-template.html](docs/report-template.html) defines:
 
 ```mermaid
-%%{init: {"theme":"dark","themeVariables":{"background":"#17191D","fontFamily":"system-ui"}}}%%
+%%{init: {"theme":"base","themeVariables":{"background":"#F6F7F9","primaryColor":"#FFFFFF","primaryTextColor":"#1B2028","primaryBorderColor":"#8A94A3","lineColor":"#8A94A3","fontFamily":"system-ui"}}}%%
 flowchart TB
     user["User"] --> web["Web App"]
     web --> api["API Layer"]
@@ -78,11 +78,11 @@ flowchart TB
     api --> worker["Background Worker"]
     worker --> external["External Service"]
 
-    classDef node fill:#22262B,stroke:#626B77,color:#E7EBF0;
-    classDef focus fill:#2B3223,stroke:#C9F36B,stroke-width:2px,color:#E7EBF0;
+    classDef node fill:#FFFFFF,stroke:#8A94A3,color:#1B2028;
+    classDef focus fill:#F0F6E2,stroke:#4D7C0F,stroke-width:2px,color:#1B2028;
     class user,web,api,core,db focus;
     class worker,external node;
-    linkStyle 0,1,2,3 stroke:#C9F36B,stroke-width:2.5px;
+    linkStyle 0,1,2,3 stroke:#4D7C0F,stroke-width:2.5px;
 ```
 
 The highlighted route answers the focus question; nearby systems stay visible
@@ -99,6 +99,7 @@ Copy the skill bundle into the skills directory supported by your agent:
 <agent-skills-directory>/codebase-map/
 ├── SKILL.md
 ├── docs/
+│   ├── diagram-geometry.md
 │   ├── index-schema.md
 │   └── report-template.html
 └── scripts/
@@ -179,6 +180,7 @@ silently preserving them.
 ├── README.md
 ├── LICENSE
 ├── docs/
+│   ├── diagram-geometry.md
 │   ├── index-schema.md
 │   └── report-template.html
 ├── scripts/

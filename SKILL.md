@@ -64,8 +64,8 @@ sources, confidence, and gaps.
 For every run, return a Mermaid diagram inline: the architecture overview when
 there is no focus question, or the question-matched view when one is supplied.
 Follow it with a short caption and key source paths. Use `flowchart`,
-`sequenceDiagram`, or `erDiagram` to fit the question, using the same dark
-palette and highlighted path. Link the HTML report for the interactive map.
+`sequenceDiagram`, or `erDiagram` to fit the question, using the same palette
+and highlighted path. Link the HTML report for the interactive map.
 Keep the index, context, and evidence artifacts available as support.
 
 Keep the report local and self-contained. Do not upload repository contents,
@@ -114,7 +114,9 @@ apart.
 Start from [docs/report-template.html](docs/report-template.html) and fill its
 regions. It is the report contract: it carries the palette, the
 cross-highlighting, and one example of every element the completion check
-expects, so the shape is stated once rather than restated in prose.
+expects, so the shape is stated once rather than restated in prose. Where the
+template stops at regions and colours, [docs/diagram-geometry.md](docs/diagram-geometry.md)
+owns the coordinates that place things inside them.
 
 The regions are the report's required shape:
 
@@ -126,12 +128,14 @@ The regions are the report's required shape:
   confidence for each concept;
 - the “Start here” learning path.
 
-Use the palette the template defines: a dark charcoal canvas with slightly
-raised node surfaces, clear off-white labels, muted secondary text, and subdued
-slate connectors, with one lime accent for the requested or selected path. Show
+Use the palette the template defines: a light paper canvas with a faint grid
+under each map, white tiles for nodes, ink labels centred beneath them, muted
+slate connectors, and one olive accent for the requested or selected path. Show
 that path with line weight and outlines as well as color, so meaning remains
-clear without color alone. Use compact labeled boxes, directional arrows, system
-sans-serif for diagram labels, and monospace for source paths.
+clear without color alone. A node is a tile carrying a kind code with its label
+below, never a logo and never a kind the evidence does not support. Use
+directional arrows, system sans-serif for diagram labels, and monospace for kind
+codes and source paths.
 
 Keep the map itself prominent. Keep node labels short; place explanations and
 source paths in the detail panel. Captions should fit in one or two short
@@ -139,16 +143,20 @@ sentences. Use enough contrast, visible keyboard focus, and responsive sizing.
 
 ### Fit and legibility
 
-- Include every node, arrow, label, and caption inside the diagram bounds; size
-  the SVG viewBox or canvas to the complete drawing.
+Place nodes, edges, and labels by the numbers in
+[docs/diagram-geometry.md](docs/diagram-geometry.md): the tile and the footprint
+its label makes, the character budget that keeps a label inside one, the column
+and row pitch, and the rule that an arrow connects footprint boundaries and never
+runs across a footprint. That file owns the values; do not restate them here or
+invent variants per report.
+
+What stays judgement:
+
 - Choose a horizontal or vertical layout to fit the available space. Reflow or
   provide intentional pan and zoom on narrow screens so the primary path stays
   visible.
-- Align nodes to a consistent grid with even spacing. Keep arrows attached to
-  their endpoints and route them clear of text; prevent collisions and overlap.
-- Let boxes grow or wrap labels instead of clipping text. Shorten canvas labels
-  and move extra detail into the selection panel; do not shrink the whole map
-  until it is hard to read.
+- Keep the map itself prominent; do not shrink it until it is hard to read in
+  order to fit more of the repository in.
 - Use consistent type sizes, weights, and line height with a clear hierarchy.
   Keep diagram labels and captions readable at their rendered size.
 
@@ -197,20 +205,26 @@ It verifies that the report files exist, that `index.json` is valid and carries
 `schemaVersion`, that every material entry has evidence and confidence, that
 every relationship, flow step, owner, and diagram `data-concept-id` resolves to a
 real concept, that the report's palette matches `docs/report-template.html`, that
-a search control is present once the report exceeds ten concepts, that no
-source-code download control or secret-shaped literal appears, and that
-`context.md` stays within its budget.
+the diagrams obey `docs/diagram-geometry.md` — content inside the viewBox, labels
+inside their footprint, no node overlap, arrows attached to footprint boundaries
+and clear of every node they do not connect — that a search control is present
+once the report exceeds ten concepts, that no source-code download control or
+secret-shaped literal appears, and that `context.md` stays within its budget.
 
 The rest needs judgement and cannot be decided from files:
 
 - the inline diagram and the latest HTML focus answer the same question;
-- the HTML uses the dark canvas, compact boxes, directional arrows, the
-  highlighted path, and concise captions;
+- the HTML uses the paper canvas, tiles with their labels beneath, directional
+  arrows, the highlighted path, and concise captions;
 - the diagram form matches the question;
-- no node, edge, label, or caption is cut off, clipped, overlapped, or
-  misaligned, at normal or narrow widths;
+- the map reads well at normal and narrow widths, where nothing looks cramped
+  and the primary path still leads the eye;
 - the generated context is compact enough to load before targeted retrieval;
 - production source files were not changed.
+
+A passing check is not a passing picture: a clean report can still read as
+cluttered, so look at the rendered `architecture.html` before finishing, the way
+you would read a diagram you had to explain from.
 
 Report the report path, revision, focus question and diagram type, indexed
 boundaries, changed areas, and known gaps.

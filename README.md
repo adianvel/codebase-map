@@ -101,7 +101,8 @@ Copy the skill bundle into the skills directory supported by your agent:
 ├── docs/
 │   ├── diagram-geometry.md
 │   ├── index-schema.md
-│   └── report-template.html
+│   ├── report-template.html
+│   └── technology-marks.json
 └── scripts/
     └── check-report.mjs
 ```
@@ -182,7 +183,8 @@ silently preserving them.
 ├── docs/
 │   ├── diagram-geometry.md
 │   ├── index-schema.md
-│   └── report-template.html
+│   ├── report-template.html
+│   └── technology-marks.json
 ├── scripts/
 │   └── check-report.mjs
 ├── .github/
@@ -195,6 +197,7 @@ silently preserving them.
         ├── repository.ts
         ├── database.ts
         ├── worker.ts
+        ├── tsconfig.json
         └── reports/
             └── codebase-map/
                 └── tiny-app/
@@ -212,9 +215,11 @@ indexing, evidence, stable IDs, and connected visual views.
 The rules that used to be listed here — label length, the overview size target,
 the search threshold, plain-text evidence, the no-download rule, and when to add
 a parser helper — are stated once in `SKILL.md`, which owns the contract. The
-report's shape and palette live in `docs/report-template.html`, and
-`scripts/check-report.mjs` enforces the mechanical parts. CI runs that module over
-the example report on every push and pull request.
+report's shape and palette live in `docs/report-template.html`, the coordinates
+in `docs/diagram-geometry.md`, the technology a tile may show in
+`docs/technology-marks.json`, and `scripts/check-report.mjs` enforces the
+mechanical parts. CI runs that module over the example report on every push and
+pull request.
 
 ## License
 

@@ -9,6 +9,7 @@ publishes a <code>record.read</code> event to the worker.
 1. handler.ts — request input and status response.
 2. repository.ts — database read and conditional worker event.
 3. database.ts — fixture data behavior.
+4. tsconfig.json — strict TypeScript compile settings; no runtime role.
 
 The fixture contains no database schema, so table structure and key
 relationships are unknown.

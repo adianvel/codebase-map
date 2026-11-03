@@ -12,7 +12,9 @@
  * The palette is compared against docs/report-template.html, which is its single
  * home, so a colour cannot silently diverge between the template and a report.
  * The layout numbers come from docs/diagram-geometry.md, which is the one place
- * that states them; here they only decide what a coordinate can decide.
+ * that states them; here they only decide what a coordinate can decide. A tile's
+ * technology mark is compared against docs/technology-marks.json, so a mark can
+ * only be a vendored one and only where the index names that technology.
  *
  * Zero dependencies, so it runs anywhere Node runs.
  */
@@ -58,6 +60,10 @@ export const CONCEPT_MARKER = /\bdata-concept-id\s*=\s*"([^"]*)"/g
 // The report template is the single home for the palette. Compare against it so
 // a colour changed in one place cannot silently diverge from the others.
 export const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta.url)
+
+// The only marks a report may draw. A path outside this file is a mark somebody
+// drew from memory, which is the failure mode this asset exists to prevent.
+export const MARKS_PATH = new URL('../docs/technology-marks.json', import.meta.url)
 
 export function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -545,6 +551,139 @@ export function checkLayout(html, errors = []) {
   }
 }
 
+// Every string the index states, lower-cased — the text a mark has to earn its
+// place in. Paths, names, summaries, evidence, and gaps all count; nothing in
+// the report itself does.
+function indexText(index) {
+  const parts = []
+  const walk = (value) => {
+    if (typeof value === 'string') parts.push(value)
+    else if (Array.isArray(value)) value.forEach(walk)
+    else if (isPlainObject(value)) Object.values(value).forEach(walk)
+  }
+  walk(index)
+  return parts.join('\n').toLowerCase()
+}
+
+const WORD_CHAR = /[a-z0-9]/
+
+// "react" backs React; "reactive" does not. Keywords end in a separator
+// (".github/workflows", "node.js") match on their own.
+function namesToken(text, token) {
+  let from = 0
+  for (;;) {
+    const at = text.indexOf(token, from)
+    if (at === -1) return false
+    const before = at === 0 ? '' : text[at - 1]
+    const after = text[at + token.length] || ''
+    if (!WORD_CHAR.test(before) && !WORD_CHAR.test(after)) return true
+    from = at + 1
+  }
+}
+
+export function detectTechnologies(index, marks) {
+  if (!marks || !marks.marks) return new Set()
+  const text = indexText(index)
+  const backed = new Set()
+  for (const mark of marks.marks) {
+    if (mark.keywords.some(token => namesToken(text, token.toLowerCase()))) backed.add(mark.slug)
+  }
+  return backed
+}
+
+function transformOf(el) {
+  const raw = attribute(el, 'transform')
+  if (!raw) return null
+  const move = raw.match(/translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/)
+  const zoom = raw.match(/scale\(\s*(-?[\d.]+)\s*\)/)
+  if (!move || !zoom) return null
+  return { x: parseFloat(move[1]), y: parseFloat(move[2]), scale: parseFloat(zoom[1]) }
+}
+
+function normalizedPath(d) {
+  return d.replace(/\s+/g, ' ').trim()
+}
+
+const COLOUR_ATTRIBUTE = /\b(?:fill|stroke|color|style)\s*=/i
+
+// A mark is borrowed identity, so it is checked three ways: it must be a real
+// slug, drawn from the vendored path, in the ink the template sets, placed
+// inside its tile, and — the rule that keeps the map honest — named by the
+// index rather than assumed from how the repository looks.
+export function checkMarks(html, errors = [], marks = null, backed = null) {
+  const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
+  const bySlug = marks && marks.marks ? new Map(marks.marks.map(m => [m.slug, m])) : null
+
+  for (const svg of diagrams) {
+    const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
+    const name = title ? title[1].trim() : 'diagram'
+    for (const block of (svg.match(/<a\b[\s\S]*?<\/a>/g) || [])) {
+      const rect = block.match(/<rect\b[^>]*class="[^"]*\btile\b[^"]*"[^>]*>/)
+      if (!rect) continue
+      const tile = boxOf(rect[0])
+      const logo = block.match(/<g\b[^>]*class="[^"]*\btile-logo\b[^"]*"[\s\S]*?<\/g>/)
+      const kindCode = /class="[^"]*\btile-mark\b/.test(block)
+
+      if (!logo) {
+        if (!kindCode) {
+          errors.push(`${name}: the tile at x=${tile.x} y=${tile.y} carries neither a technology mark nor a kind code`)
+        }
+        continue
+      }
+
+      if (kindCode) {
+        errors.push(`${name}: the tile at x=${tile.x} y=${tile.y} carries both a technology mark and a kind code; a tile shows one`)
+      }
+
+      const group = logo[0].match(/^<g\b[^>]*>/)[0]
+      const slug = attribute(group, 'data-tech')
+      if (!slug) {
+        errors.push(`${name}: a tile-logo has no data-tech; the check cannot tell which technology it claims`)
+        continue
+      }
+
+      if (!bySlug) {
+        errors.push(`${name}: report draws the "${slug}" mark but docs/technology-marks.json was not read; the path cannot be verified`)
+        continue
+      }
+
+      const mark = bySlug.get(slug)
+      if (!mark) {
+        errors.push(`${name}: "${slug}" is not a mark in docs/technology-marks.json; use a vendored slug or the kind code`)
+        continue
+      }
+
+      if (COLOUR_ATTRIBUTE.test(group) || COLOUR_ATTRIBUTE.test(logo[0])) {
+        errors.push(`${name}: the "${slug}" mark carries its own colour; the template sets one ink for every mark and a brand path is never recoloured`)
+      }
+
+      const path = logo[0].match(/<path\b[^>]*\bd\s*=\s*"([^"]*)"/)
+      if (!path) {
+        errors.push(`${name}: the "${slug}" mark has no <path d>; copy the vendored path into it`)
+      } else if (normalizedPath(path[1]) !== normalizedPath(mark.path)) {
+        errors.push(`${name}: the "${slug}" mark is not the path in docs/technology-marks.json; copy it verbatim or drop the mark`)
+      }
+
+      if (backed && !backed.has(slug)) {
+        errors.push(`${name}: the "${slug}" mark is not backed by index.json; name the technology in the evidence or use the kind code`)
+      }
+
+      const placed = transformOf(group)
+      const box = marks && marks.box ? marks.box : 24
+      if (!placed) {
+        errors.push(`${name}: the "${slug}" mark needs a transform that places its ${box}x${box} path inside the tile; docs/diagram-geometry.md gives translate and scale`)
+      } else {
+        const size = box * placed.scale
+        const inside = placed.x >= tile.x && placed.y >= tile.y
+          && placed.x + size <= tile.x + tile.width && placed.y + size <= tile.y + tile.height
+        if (!inside) {
+          errors.push(`${name}: the "${slug}" mark covers x=${placed.x} y=${placed.y} ${size}x${size}, which is not inside its tile at x=${tile.x} y=${tile.y} ${tile.width}x${tile.height}`)
+        }
+      }
+    }
+  }
+}
+
 export async function checkSecrets(dir, errors = []) {
   for (const name of REQUIRED_FILES) {
     let contents
@@ -614,6 +753,16 @@ export async function checkReport(target, options = {}) {
     const html = await readFile(join(dir, 'architecture.html'), 'utf8')
     checkHtml(html, conceptIds, errors)
     checkLayout(html, errors)
+
+    let marks = options.marks
+    if (marks === undefined) {
+      try {
+        marks = JSON.parse(await readFile(options.marksPath || MARKS_PATH, 'utf8'))
+      } catch {
+        marks = null
+      }
+    }
+    checkMarks(html, errors, marks, index ? detectTechnologies(index, marks) : null)
 
     let templateHtml = options.templateHtml
     if (templateHtml === undefined) {

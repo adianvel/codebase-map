@@ -40,6 +40,7 @@ column centre `cx` and the row top `tileY`.
 ```
 tile               x = cx − 30, y = tileY, 60 × 60, rx 12
 kind mark          (cx, tileY + 37)   15px mono
+technology mark    translate(cx − 15, tileY + 15) scale(1.25)   24 × 24 path → 30 × 30
 title baseline     (cx, tileY + 78)   13px
 subtitle baseline  (cx, tileY + 96)   11px mono
 footprint          cx − 66 .. cx + 66, tileY .. tileY + 100
@@ -48,8 +49,13 @@ footprint          cx − 66 .. cx + 66, tileY .. tileY + 100
 The footprint is the node: everything — overlap, attachment, the viewBox margin —
 is measured against it, not against the tile.
 
-The tile carries the two-letter kind code the template's node markup defines.
-Never a logo, and never a code the evidence does not back.
+The tile carries exactly one of the two inner marks, and never both: the
+two-letter kind code the template's node markup defines, or a technology mark
+from `docs/technology-marks.json`. A mark goes in only when `index.json` names
+that technology, sits 30×30 inside the tile (`tileY + 15 .. tileY + 45`, centred
+on the column), keeps the path verbatim, and takes the one `--mark-ink` colour the
+template sets — no `fill`, `style`, or accent of its own. Everything else about
+the node is unchanged: same tile, same footprint, same labels.
 
 Labels are the discipline. An average glyph in the report's font stack advances
 at about 0.54em, so a label fits inside the footprint when:

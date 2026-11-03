@@ -3,18 +3,21 @@
   codebase-map report template.
 
   This file is the report contract. Copy it, fill every {{placeholder}}, and
-  delete the region comments when you are done. It carries three things that
+  delete the region comments when you are done. It carries four things that
   exist nowhere else:
 
     1. the palette (:root below) — the single source for every colour the skill
        uses, in the report and in inline diagrams;
     2. the interaction — cross-highlighting across every view;
-    3. the required regions, one per diagram, plus the detail panel.
+    3. the required regions, one per diagram, plus the detail panel;
+    4. what a tile may carry — the kind codes below, and the rules for the
+       technology marks whose path data lives in docs/technology-marks.json.
 
   scripts/check-report.mjs enforces the mechanical parts: the palette matches
   this file, the diagrams obey the coordinates in docs/diagram-geometry.md, every
-  data-concept-id resolves to a concept in index.json, a search control exists
-  above ten concepts, no download control and no secret.
+  data-concept-id resolves to a concept in index.json, every tile mark is a real
+  slug from docs/technology-marks.json copied verbatim and named by the index,
+  a search control exists above ten concepts, no download control and no secret.
 
   Anything the check cannot decide — whether the focused view answers the
   question, whether captions are concise, whether the map reads well at a narrow
@@ -43,6 +46,7 @@
       --focus-wash: #f0f6e2;
       --group-wash: #eef2f7;
       --group-line: #cfd8e4;
+      --mark-ink: #3f4854;
       --radius: 10px;
       --tile-radius: 12px;
       --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -244,10 +248,13 @@
       text-transform: uppercase;
     }
 
-    /* A node is a tile with its label centred below it. The tile carries a
-       two-letter kind code, never a logo: RT route, FN function, DB store,
-       WN worker, CF config, TS test, UI view, EX external. Those are labels,
-       not logos, and none goes in unless the evidence backs it. */
+    /* A node is a tile with its label centred below it. The tile carries one
+       thing: a technology mark, or the two-letter kind code it falls back to —
+       RT route, FN function, DB store, WN worker, CF config, TS test, UI view,
+       EX external. A mark is a monochrome path copied verbatim from
+       docs/technology-marks.json and named with data-tech; it belongs on a tile
+       only when index.json names that technology, and it keeps the one ink
+       colour below whatever the tile says about the path being highlighted. */
     .tile {
       fill: var(--paper);
       stroke: var(--line);
@@ -273,6 +280,13 @@
     }
 
     .diagram-node .tile-focus ~ .tile-mark { fill: var(--focus-ink); }
+
+    /* Never recolour a mark: no fill, style, or colour attribute on it, and no
+       accent state reaching it. Identity comes from the tile outline and the
+       arrow, so a brand path and a kind code read at the same weight. */
+    .tile-logo {
+      fill: var(--mark-ink);
+    }
 
     /* Labels sit on the paper under their tile; the halo keeps them readable
        where a grid rule or an edge would otherwise run through them. */
@@ -579,7 +593,15 @@
 
             <a class="diagram-node" href="#detail-{{concept slug}}" data-concept-id="concept-{{id}}" aria-label="{{concept name}} details">
               <rect class="tile tile-muted" x="270" y="250" width="60" height="60" rx="12"></rect>
-              <text class="tile-mark" x="300" y="287" text-anchor="middle">{{DB}}</text>
+              <!-- The backed tile shows its technology mark instead of a kind
+                   code: one <g class="tile-logo" data-tech> per node, the 24x24
+                   path from docs/technology-marks.json copied verbatim and scaled
+                   to 30x30 centred in the tile — translate(cx - 15, tileY + 15)
+                   scale(1.25). Drop the element and use a .tile-mark instead
+                   whenever the index does not name the technology. -->
+              <g class="tile-logo" data-tech="{{slug in docs/technology-marks.json}}" transform="translate(285 265) scale(1.25)">
+                <path d="{{path, copied verbatim from the marks file}}"></path>
+              </g>
               <text class="node-title" x="300" y="328" text-anchor="middle">{{concept name}}</text>
               <text class="node-subtitle" x="300" y="346" text-anchor="middle">{{symbol or path}}</text>
             </a>

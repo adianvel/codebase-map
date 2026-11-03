@@ -12,8 +12,14 @@
   stub does not exercise it.
 - <code>worker.publish</code> accepts and returns the event — confirmed by
   worker.ts:2-3.
+- <code>tsconfig.json</code> type-checks every source file in strict mode and
+  compiles nothing at run time — confirmed by tsconfig.json:6, tsconfig.json:9.
 
 ## Known gaps
 
 - No schema file or database entity definitions exist in this fixture. There
   is no evidence for tables, keys, cardinality, or stored relationships.
+- The index names one technology, TypeScript, so the build-config tile is the
+  only one carrying its mark. The handler, database, and worker tiles keep
+  their kind codes: nothing here evidences a runtime, a framework, or an
+  engine behind them.

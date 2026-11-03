@@ -41,6 +41,15 @@
       "symbols": ["concept-worker"],
       "evidence": ["worker.ts:2", "worker.ts:3"],
       "confidence": "confirmed"
+    },
+    {
+      "id": "file-tsconfig",
+      "path": "tsconfig.json",
+      "kind": "config",
+      "summary": "Type-checks every TypeScript source file in strict mode.",
+      "symbols": [],
+      "evidence": ["tsconfig.json:6", "tsconfig.json:9"],
+      "confidence": "confirmed"
     }
   ],
   "concepts": [
@@ -82,6 +91,14 @@
       "summary": "Receives the record.read event after a successful lookup.",
       "ownerFileIds": ["file-worker"],
       "evidence": ["repository.ts:7", "worker.ts:2"],
+      "confidence": "confirmed"
+    },
+    {
+      "id": "concept-build-config",
+      "name": "Build config",
+      "summary": "Compiles the fixture as strict TypeScript; no runtime role.",
+      "ownerFileIds": ["file-tsconfig"],
+      "evidence": ["tsconfig.json:6", "tsconfig.json:9"],
       "confidence": "confirmed"
     }
   ],

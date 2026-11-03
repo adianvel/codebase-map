@@ -78,6 +78,8 @@ Scan the repository locally, but do not load the whole repository into the
 agent prompt:
 
 1. Read instructions, README files, manifests, lockfiles, and configuration.
+   Record the technologies they name in `index.json` — a mark on a tile is only
+   allowed later if the index says the technology is there.
 2. Inventory relevant tracked files with Git when available; otherwise walk the
    filesystem with explicit exclusions for dependencies, build output, caches,
    generated artifacts, binaries, and secret files.
@@ -132,10 +134,18 @@ Use the palette the template defines: a light paper canvas with a faint grid
 under each map, white tiles for nodes, ink labels centred beneath them, muted
 slate connectors, and one olive accent for the requested or selected path. Show
 that path with line weight and outlines as well as color, so meaning remains
-clear without color alone. A node is a tile carrying a kind code with its label
-below, never a logo and never a kind the evidence does not support. Use
-directional arrows, system sans-serif for diagram labels, and monospace for kind
-codes and source paths.
+clear without color alone. A node is a tile carrying its label below, and the
+tile shows one of two things: the technology mark of a stack the index actually
+names, or the two-letter kind code it falls back to. Never a mark the evidence
+does not back, never a recoloured or hand-drawn one. Use directional arrows,
+system sans-serif for diagram labels, and monospace for kind codes and source
+paths.
+
+Marks come from [docs/technology-marks.json](docs/technology-marks.json): read
+the marks whose slugs the index supports, copy each `path` verbatim into
+`<g class="tile-logo" data-tech="…">`, and keep the single ink the template
+sets. The report stays self-contained, so never fetch an icon, and never add a
+technology to `index.json` just to earn a mark.
 
 Keep the map itself prominent. Keep node labels short; place explanations and
 source paths in the detail panel. Captions should fit in one or two short
@@ -207,15 +217,19 @@ every relationship, flow step, owner, and diagram `data-concept-id` resolves to 
 real concept, that the report's palette matches `docs/report-template.html`, that
 the diagrams obey `docs/diagram-geometry.md` — content inside the viewBox, labels
 inside their footprint, no node overlap, arrows attached to footprint boundaries
-and clear of every node they do not connect — that a search control is present
-once the report exceeds ten concepts, that no source-code download control or
-secret-shaped literal appears, and that `context.md` stays within its budget.
+and clear of every node they do not connect — that every tile carries either a
+kind code or one vendored mark copied verbatim from `docs/technology-marks.json`
+and named by the index, in the template's ink and inside its tile, that a search
+control is present once the report exceeds ten concepts, that no source-code
+download control or secret-shaped literal appears, and that `context.md` stays
+within its budget.
 
 The rest needs judgement and cannot be decided from files:
 
 - the inline diagram and the latest HTML focus answer the same question;
-- the HTML uses the paper canvas, tiles with their labels beneath, directional
-  arrows, the highlighted path, and concise captions;
+- the HTML uses the paper canvas, tiles with their labels beneath, marks where
+  the index backs them and kind codes elsewhere, directional arrows, the
+  highlighted path, and concise captions;
 - the diagram form matches the question;
 - the map reads well at normal and narrow widths, where nothing looks cramped
   and the primary path still leads the eye;

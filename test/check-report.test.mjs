@@ -10,6 +10,8 @@ import {
   checkHtml,
   checkPalette,
   checkLayout,
+  checkMarks,
+  detectTechnologies,
   checkSecrets,
   checkContextBudget,
   paletteOf,
@@ -229,10 +231,13 @@ test('checkContextBudget: flags context.md exceeding byte limit', async () => {
 
 // A node is a 60x60 tile centred on its column, with its label underneath; the
 // module measures the 132x100 footprint the geometry file defines, not the tile.
-function node(id, { cx, tileY, title, subtitle, mark = 'FN' }) {
+function node(id, { cx, tileY, title, subtitle, mark = 'FN', logo = null, both = false }) {
+  const showCode = logo ? both : mark !== null
+  const code = showCode
+    ? `\n    <text class="tile-mark" x="${cx}" y="${tileY + 37}" text-anchor="middle">${mark}</text>` : ''
+  const face = `${code}${logo ? `\n    ${logo}` : ''}`
   return `<a class="diagram-node" href="#detail-${id}" data-concept-id="concept-${id}">
-    <rect class="tile tile-focus" x="${cx - 30}" y="${tileY}" width="60" height="60" rx="12"></rect>
-    <text class="tile-mark" x="${cx}" y="${tileY + 37}" text-anchor="middle">${mark}</text>
+    <rect class="tile tile-focus" x="${cx - 30}" y="${tileY}" width="60" height="60" rx="12"></rect>${face}
     <text class="node-title" x="${cx}" y="${tileY + 78}" text-anchor="middle">${title}</text>
     <text class="node-subtitle" x="${cx}" y="${tileY + 96}" text-anchor="middle">${subtitle}</text>
   </a>`
@@ -347,4 +352,118 @@ test('checkLayout: skips geometry it cannot decide', () => {
 
   const lone = diagram(node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id' }))
   assert.deepEqual(layoutErrors(lone), [])
+})
+
+// --- checkMarks ------------------------------------------------------------
+
+// A stand-in for docs/technology-marks.json with paths short enough to assert on.
+const MARKS = {
+  box: 24,
+  marks: [
+    { slug: 'react', name: 'React', keywords: ['react'], path: 'M0 0 H24 V24 Z' },
+    { slug: 'postgresql', name: 'PostgreSQL', keywords: ['postgres', 'postgresql'], path: 'M4 4 L20 20' },
+    { slug: 'githubactions', name: 'GitHub Actions', keywords: ['github actions', '.github/workflows'], path: 'M1 1 H23 V23 Z' },
+  ],
+}
+
+const REACT_INDEX = {
+  repository: { name: 'probe' },
+  files: [{ id: 'f1', path: 'src/view.tsx', kind: 'source', summary: 'Renders the record', evidence: ['src/view.tsx:2'], confidence: 'confirmed' }],
+  concepts: [{ id: 'c1', name: 'React view', summary: 'Shows the record', evidence: ['src/view.tsx:2'], confidence: 'confirmed' }],
+  relationships: [],
+  flows: [],
+  gaps: [],
+}
+
+function logo({ cx = 120, tileY = 90, slug = 'react', path = 'M0 0 H24 V24 Z', transform, colour } = {}) {
+  const placed = transform || `translate(${cx - 15} ${tileY + 15}) scale(1.25)`
+  const tint = colour ? ` fill="${colour}"` : ''
+  return `    <g class="tile-logo" data-tech="${slug}"${tint} transform="${placed}"><path d="${path}"></path></g>`
+}
+
+function markErrors(html, { index = REACT_INDEX, marks = MARKS } = {}) {
+  const errors = []
+  checkMarks(html, errors, marks, index ? detectTechnologies(index, marks) : null)
+  return errors
+}
+
+test('checkMarks: accepts a mark the index names, drawn as vendored', () => {
+  const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id' })
+    + node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handleRequest', logo: logo({ cx: 300 }) }))
+  assert.deepEqual(markErrors(html), [])
+})
+
+test('checkMarks: flags a mark the index does not name', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Store', subtitle: 'records', logo: logo({ slug: 'postgresql', path: 'M4 4 L20 20' }) }))
+  assert.match(markErrors(html).join('\n'), /"postgresql" mark is not backed by index.json/)
+})
+
+test('checkMarks: flags a slug that is not vendored', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'svelte' }) }))
+  assert.match(markErrors(html).join('\n'), /"svelte" is not a mark in docs\/technology-marks.json/)
+})
+
+test('checkMarks: flags a path that was redrawn rather than copied', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ path: 'M0 0 H12 V12 Z' }) }))
+  assert.match(markErrors(html).join('\n'), /"react" mark is not the path in docs\/technology-marks.json/)
+})
+
+test('checkMarks: flags a recoloured mark', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ colour: '#61DAFB' }) }))
+  assert.match(markErrors(html).join('\n'), /carries its own colour/)
+})
+
+test('checkMarks: flags a mark that overruns its tile', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ transform: 'translate(20 20) scale(4)' }) }))
+  assert.match(markErrors(html).join('\n'), /which is not inside its tile at x=90 y=90/)
+})
+
+test('checkMarks: flags a mark whose placement it cannot read', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ transform: 'rotate(12)' }) }))
+  assert.match(markErrors(html).join('\n'), /needs a transform that places its 24x24 path inside the tile/)
+})
+
+test('checkMarks: flags a tile carrying a mark and a kind code', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo(), both: true }))
+  assert.match(markErrors(html).join('\n'), /carries both a technology mark and a kind code/)
+})
+
+test('checkMarks: flags a tile carrying neither', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', mark: null }))
+  assert.match(markErrors(html).join('\n'), /neither a technology mark nor a kind code/)
+})
+
+test('checkMarks: flags a mark whose slug is missing', () => {
+  const bare = '    <g class="tile-logo" transform="translate(285 105) scale(1.25)"><path d="M0 0 H24 V24 Z"></path></g>'
+  const html = diagram(node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handler', logo: bare }))
+  assert.match(markErrors(html).join('\n'), /has no data-tech/)
+})
+
+test('checkMarks: says so when the marks file was never read', () => {
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo() }))
+  assert.match(markErrors(html, { marks: null }).join('\n'), /docs\/technology-marks.json was not read/)
+})
+
+test('detectTechnologies: matches tokens, not substrings', () => {
+  const names = (text) => [...detectTechnologies({ repository: { name: 'probe' }, files: [{ path: text, summary: text }], concepts: [] }, MARKS)]
+  assert.deepEqual(names('src/react.tsx'), ['react'])
+  assert.deepEqual(names('reactive form state'), [])
+  assert.deepEqual(names('PostgreSQL dump'), ['postgresql'])
+  assert.deepEqual(names('postgres://user'), ['postgresql'])
+  assert.deepEqual(names('.github/workflows/ci.yml'), ['githubactions'])
+  assert.deepEqual(names('github actions matrix'), ['githubactions'])
+})
+
+test('technology marks asset: every mark is vendored and complete', async () => {
+  const marks = JSON.parse(await readFile(new URL('../docs/technology-marks.json', import.meta.url), 'utf8'))
+  assert.equal(marks.box, 24)
+  assert.ok(marks.marks.length >= 15, 'the set should cover the stacks a scan usually names')
+  const slugs = marks.marks.map(mark => mark.slug)
+  assert.equal(new Set(slugs).size, slugs.length)
+  for (const mark of marks.marks) {
+    assert.ok(mark.name.length > 0)
+    assert.ok(mark.keywords.length > 0 && mark.keywords.every(k => k.length > 2))
+    assert.match(mark.path, /^M-?[\d.]/)
+    assert.doesNotMatch(mark.path, /\s\s/, `${mark.slug} path is not normalised`)
+  }
 })

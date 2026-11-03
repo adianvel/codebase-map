@@ -60,6 +60,10 @@ renderer needs them.
 IDs are generated from the target repository's own concepts. They are not
 global vocabulary and must not be copied from an example repository.
 
+Name the technologies a manifest, lockfile, or import states — inside a file or
+concept summary, or as its own entry. That is what a tile's technology mark is
+allowed to be backed by; an index that names no stack draws kind codes.
+
 Represent database structure with evidence-backed concepts for tables,
 collections, or entities and relationships such as `references`, `reads`, and
 `writes`. For database relationships, put evidenced key or join expressions

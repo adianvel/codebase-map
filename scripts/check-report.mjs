@@ -65,7 +65,7 @@ export const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta
 // drew from memory, which is the failure mode this asset exists to prevent.
 export const MARKS_PATH = new URL('../docs/technology-marks.json', import.meta.url)
 
-export function isPlainObject(value) {
+function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -97,7 +97,7 @@ function requireEvidenceAndConfidence(entry, where, errors) {
   }
 }
 
-export function checkIndex(index, errors = []) {
+function checkIndex(index, errors = []) {
   const fileIds = new Set()
   const conceptIds = new Set()
 
@@ -201,7 +201,7 @@ export function checkIndex(index, errors = []) {
   return { fileIds, conceptIds }
 }
 
-export function checkHtml(html, conceptIds, errors = []) {
+function checkHtml(html, conceptIds, errors = []) {
   CONCEPT_MARKER.lastIndex = 0
   const markers = new Set()
   let match
@@ -232,7 +232,7 @@ export function checkHtml(html, conceptIds, errors = []) {
   }
 }
 
-export function paletteOf(html) {
+function paletteOf(html) {
   const root = html.match(/:root\s*\{([\s\S]*?)\}/)
   if (!root) return null
   const vars = {}
@@ -242,7 +242,7 @@ export function paletteOf(html) {
   return Object.keys(vars).length ? vars : null
 }
 
-export function checkPalette(reportHtml, templateHtml, errors = []) {
+function checkPalette(reportHtml, templateHtml, errors = []) {
   const expected = paletteOf(templateHtml)
   if (!expected) return
 
@@ -442,7 +442,7 @@ function parseDiagram(svg, html) {
   return { viewBox, name: title ? title[1].trim() : 'diagram', nodes, edges, labels }
 }
 
-export function checkLayout(html, errors = []) {
+function checkLayout(html, errors = []) {
   const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
   if (diagrams.length === 0) return
 
@@ -581,7 +581,7 @@ function namesToken(text, token) {
   }
 }
 
-export function detectTechnologies(index, marks) {
+function detectTechnologies(index, marks) {
   if (!marks || !marks.marks) return new Set()
   const text = indexText(index)
   const backed = new Set()
@@ -610,7 +610,7 @@ const COLOUR_ATTRIBUTE = /\b(?:fill|stroke|color|style)\s*=/i
 // slug, drawn from the vendored path, in the ink the template sets, placed
 // inside its tile, and — the rule that keeps the map honest — named by the
 // index rather than assumed from how the repository looks.
-export function checkMarks(html, errors = [], marks = null, backed = null) {
+function checkMarks(html, errors = [], marks = null, backed = null) {
   const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
   const bySlug = marks && marks.marks ? new Map(marks.marks.map(m => [m.slug, m])) : null
 
@@ -684,59 +684,51 @@ export function checkMarks(html, errors = [], marks = null, backed = null) {
   }
 }
 
-export async function checkSecrets(dir, errors = []) {
+function checkSecrets(bundle, errors = []) {
   for (const name of REQUIRED_FILES) {
-    let contents
-    try {
-      contents = await readFile(join(dir, name), 'utf8')
-    } catch {
-      continue
-    }
+    const contents = bundle[name]
+    if (typeof contents !== 'string') continue
     for (const [pattern, label] of SECRET_PATTERNS) {
       if (pattern.test(contents)) errors.push(`${name} looks like it contains a ${label}`)
     }
   }
 }
 
-export async function checkContextBudget(dir, present, errors = []) {
-  if (!present['context.md']) return
-  const info = await stat(join(dir, 'context.md'))
-  if (info.size > MAX_CONTEXT_BYTES) {
-    errors.push(`context.md is ${info.size} bytes; the budget is ${MAX_CONTEXT_BYTES} so it stays loadable whole`)
+function checkContextBudget(bundle, errors = []) {
+  const content = bundle['context.md']
+  if (content === undefined || content === null) return
+  const size = typeof content === 'string' ? Buffer.byteLength(content, 'utf8') : 0
+  if (size > MAX_CONTEXT_BYTES) {
+    errors.push(`context.md is ${size} bytes; the budget is ${MAX_CONTEXT_BYTES} so it stays loadable whole`)
   }
 }
 
-export async function checkReport(target, options = {}) {
-  const dir = resolve(target)
-  let info
-  try {
-    info = await stat(dir)
-  } catch {
-    return { ok: false, dir, fatal: true, errors: [`report directory not found: ${dir}`] }
-  }
-  if (!info.isDirectory()) {
-    return { ok: false, dir, fatal: true, errors: [`not a directory: ${dir}`] }
+export async function verifyReport(bundle, options = {}) {
+  const errors = []
+
+  if (!isPlainObject(bundle)) {
+    return { ok: false, errors: ['report bundle must be an object'] }
   }
 
-  const errors = []
-  const present = {}
   for (const name of REQUIRED_FILES) {
-    try {
-      await stat(join(dir, name))
-      present[name] = true
-    } catch {
-      present[name] = false
+    if (bundle[name] === undefined || bundle[name] === null) {
       errors.push(`missing report file: ${name}`)
     }
   }
 
   let index = null
-  if (present['index.json']) {
-    const raw = await readFile(join(dir, 'index.json'), 'utf8')
-    try {
-      index = JSON.parse(raw)
-    } catch (error) {
-      errors.push(`index.json is not valid JSON: ${error.message}`)
+  if (bundle['index.json'] !== undefined && bundle['index.json'] !== null) {
+    const raw = bundle['index.json']
+    if (typeof raw === 'string') {
+      try {
+        index = JSON.parse(raw)
+      } catch (error) {
+        errors.push(`index.json is not valid JSON: ${error.message}`)
+      }
+    } else if (isPlainObject(raw)) {
+      index = raw
+    } else {
+      errors.push('index.json must be an object')
     }
   }
 
@@ -749,8 +741,8 @@ export async function checkReport(target, options = {}) {
     }
   }
 
-  if (present['architecture.html']) {
-    const html = await readFile(join(dir, 'architecture.html'), 'utf8')
+  if (typeof bundle['architecture.html'] === 'string') {
+    const html = bundle['architecture.html']
     checkHtml(html, conceptIds, errors)
     checkLayout(html, errors)
 
@@ -778,13 +770,42 @@ export async function checkReport(target, options = {}) {
     }
   }
 
-  await checkSecrets(dir, errors)
-  await checkContextBudget(dir, present, errors)
+  checkSecrets(bundle, errors)
+  checkContextBudget(bundle, errors)
 
   return {
     ok: errors.length === 0,
-    dir,
     errors,
+  }
+}
+
+export async function checkReport(target, options = {}) {
+  const dir = resolve(target)
+  let info
+  try {
+    info = await stat(dir)
+  } catch {
+    return { ok: false, dir, fatal: true, errors: [`report directory not found: ${dir}`] }
+  }
+  if (!info.isDirectory()) {
+    return { ok: false, dir, fatal: true, errors: [`not a directory: ${dir}`] }
+  }
+
+  const bundle = {}
+  for (const name of REQUIRED_FILES) {
+    try {
+      bundle[name] = await readFile(join(dir, name), 'utf8')
+    } catch {
+      bundle[name] = undefined
+    }
+  }
+
+  const result = await verifyReport(bundle, options)
+
+  return {
+    ok: result.ok,
+    dir,
+    errors: result.errors,
   }
 }
 

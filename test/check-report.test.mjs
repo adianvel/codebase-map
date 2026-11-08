@@ -1,24 +1,138 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolve } from 'node:path'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import {
+  verifyReport,
   checkReport,
-  checkIndex,
-  checkHtml,
-  checkPalette,
-  checkLayout,
-  checkMarks,
-  detectTechnologies,
-  checkSecrets,
-  checkContextBudget,
-  paletteOf,
   REQUIRED_FILES,
   SEARCH_CONCEPT_THRESHOLD,
   MAX_CONTEXT_BYTES,
 } from '../scripts/check-report.mjs'
+
+// --- Minimal Valid Fixtures ------------------------------------------------
+
+const VALID_INDEX = {
+  schemaVersion: 1,
+  repository: { name: 'test' },
+  files: [
+    {
+      id: 'f1',
+      path: 'src/main.ts',
+      summary: 'Entrypoint',
+      kind: 'source',
+      evidence: ['src/main.ts:1'],
+      confidence: 'confirmed',
+      symbols: ['main'],
+    },
+  ],
+  concepts: [
+    {
+      id: 'concept-a',
+      name: 'Concept A',
+      summary: 'First concept',
+      evidence: ['src/main.ts:1'],
+      confidence: 'confirmed',
+      ownerFileIds: ['f1'],
+    },
+    {
+      id: 'concept-b',
+      name: 'Concept B',
+      summary: 'Second concept',
+      evidence: ['src/main.ts:10'],
+      confidence: 'confirmed',
+      ownerFileIds: ['f1'],
+    },
+  ],
+  relationships: [
+    {
+      source: 'concept-a',
+      target: 'concept-b',
+      kind: 'calls',
+      summary: 'Calls concept B',
+      evidence: ['src/main.ts:5'],
+      confidence: 'confirmed',
+    },
+  ],
+  flows: [
+    {
+      id: 'flow-1',
+      name: 'Test flow',
+      steps: ['concept-a', 'concept-b'],
+      evidence: ['src/main.ts:1'],
+      confidence: 'confirmed',
+    },
+  ],
+  gaps: [],
+}
+
+const VALID_PALETTE = `:root {
+  --canvas: #f6f7f9;
+  --paper: #ffffff;
+  --rule: #e4e8ee;
+  --surface: #ffffff;
+  --surface-raised: #f2f4f7;
+  --text: #1b2028;
+  --muted: #5d6773;
+  --line: #8a94a3;
+  --line-soft: #dfe3e9;
+  --focus: #4d7c0f;
+  --focus-ink: #3c620b;
+  --focus-wash: #f0f6e2;
+  --group-wash: #eef2f7;
+  --group-line: #cfd8e4;
+  --mark-ink: #3f4854;
+  --radius: 10px;
+  --tile-radius: 12px;
+  --mono: ui-monospace, sfmono-regular, consolas, monospace;
+}`
+
+const DIAGRAM_CSS = `<style>
+  ${VALID_PALETTE}
+  .node-title { font-size: 13px; }
+  .node-subtitle { font-size: 11px; }
+  .edge-label { font-size: 11px; }
+  .boundary-label { font-size: 12px; }
+</style>`
+
+function node(id, { cx, tileY, title, subtitle, mark = 'FN', logo = null, both = false }) {
+  const showCode = logo ? both : mark !== null
+  const code = showCode
+    ? `\n    <text class="tile-mark" x="${cx}" y="${tileY + 37}" text-anchor="middle">${mark}</text>` : ''
+  const face = `${code}${logo ? `\n    ${logo}` : ''}`
+  return `<a class="diagram-node" href="#detail-${id}" data-concept-id="concept-${id}">
+    <rect class="tile tile-focus" x="${cx - 30}" y="${tileY}" width="60" height="60" rx="12"></rect>${face}
+    <text class="node-title" x="${cx}" y="${tileY + 78}" text-anchor="middle">${title}</text>
+    <text class="node-subtitle" x="${cx}" y="${tileY + 96}" text-anchor="middle">${subtitle}</text>
+  </a>`
+}
+
+const PAIR = node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id: string' })
+  + node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handleRequest' })
+
+function diagram(body, { viewBox = '0 0 1040 240', title = 'Probe view', css = DIAGRAM_CSS, palette = true, markers = true } = {}) {
+  const pal = palette && !css.includes('--canvas') ? `<style>${VALID_PALETTE}</style>` : ''
+  const markHtml = markers ? '<div data-concept-id="concept-a"></div><div data-concept-id="concept-b"></div>' : ''
+  return `${pal}${css}${markHtml}<svg class="diagram" viewBox="${viewBox}" role="group"><title>${title}</title>${body}</svg>`
+}
+
+const VALID_HTML = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>')
+
+function validBundle(overrides = {}) {
+  return {
+    'index.json': JSON.stringify(VALID_INDEX),
+    'architecture.html': VALID_HTML,
+    'context.md': '# Orientation\n\nValid context within budget.',
+    'evidence.md': '# Evidence\n\nClaims and sources.',
+    ...overrides,
+  }
+}
+
+async function verifyErrors(bundle, options = {}) {
+  const result = await verifyReport(bundle, options)
+  return result.errors
+}
+
+// --- Contract Constants & CLI Adapter Tests --------------------------------
 
 test('REQUIRED_FILES defines the exact contract set', () => {
   assert.deepEqual(REQUIRED_FILES, ['index.json', 'context.md', 'architecture.html', 'evidence.md'])
@@ -38,15 +152,40 @@ test('checkReport: returns fatal error when directory does not exist', async () 
   assert.match(result.errors[0], /report directory not found/)
 })
 
-test('checkIndex: catches missing schemaVersion and repository', () => {
-  const errors = []
-  checkIndex({}, errors)
+// --- In-Memory verifyReport: Bundle Structure -------------------------------
+
+test('verifyReport: passes on a valid report bundle', async () => {
+  const result = await verifyReport(validBundle())
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+})
+
+test('verifyReport: flags non-object bundle and missing required files', async () => {
+  const nonObject = await verifyReport('not-a-bundle')
+  assert.equal(nonObject.ok, false)
+  assert.ok(nonObject.errors.some(e => e.includes('report bundle must be an object')))
+
+  const missingFiles = await verifyReport({})
+  assert.equal(missingFiles.ok, false)
+  for (const name of REQUIRED_FILES) {
+    assert.ok(missingFiles.errors.some(e => e.includes(`missing report file: ${name}`)))
+  }
+})
+
+// --- In-Memory verifyReport: Index Validation -------------------------------
+
+test('verifyReport: catches missing schemaVersion and repository in index.json', async () => {
+  const errors = await verifyErrors(validBundle({ 'index.json': {} }))
   assert.ok(errors.some(e => e.includes('missing a numeric schemaVersion')))
   assert.ok(errors.some(e => e.includes('index.json.repository must be an object')))
 })
 
-test('checkIndex: validates files, evidence, and confidence', () => {
-  const errors = []
+test('verifyReport: catches invalid JSON in index.json', async () => {
+  const errors = await verifyErrors(validBundle({ 'index.json': '{ invalid json }' }))
+  assert.ok(errors.some(e => e.includes('index.json is not valid JSON')))
+})
+
+test('verifyReport: validates files, evidence, and confidence in index.json', async () => {
   const invalidIndex = {
     schemaVersion: 1,
     repository: { name: 'test' },
@@ -66,14 +205,13 @@ test('checkIndex: validates files, evidence, and confidence', () => {
     flows: [],
     gaps: [],
   }
-  checkIndex(invalidIndex, errors)
+  const errors = await verifyErrors(validBundle({ 'index.json': invalidIndex }))
   assert.ok(errors.some(e => e.includes('must be one of source, test, config, docs, asset, generated')))
   assert.ok(errors.some(e => e.includes('evidence is empty; every material entry needs a source')))
   assert.ok(errors.some(e => e.includes('confidence must be one of confirmed, inferred, unknown')))
 })
 
-test('checkIndex: catches unresolved concept references in relationships and flows', () => {
-  const errors = []
+test('verifyReport: catches unresolved concept references in relationships and flows', async () => {
   const index = {
     schemaVersion: 1,
     repository: { name: 'test' },
@@ -112,251 +250,242 @@ test('checkIndex: catches unresolved concept references in relationships and flo
       {
         id: 'flow-1',
         name: 'Test flow',
-        steps: ['c1', 'missing-step-concept'],
+        steps: ['concept-a', 'missing-step-concept'],
         evidence: ['a.ts:3'],
         confidence: 'confirmed',
       },
     ],
     gaps: [],
   }
-  checkIndex(index, errors)
+  const errors = await verifyErrors(validBundle({ 'index.json': index }))
   assert.ok(errors.some(e => e.includes('ownerFileIds[0] "unknown-file-id" is not a file id')))
   assert.ok(errors.some(e => e.includes('target "ghost-concept" is not a concept id')))
   assert.ok(errors.some(e => e.includes('steps[1] "missing-step-concept" is not a concept id')))
 })
 
-test('checkHtml: flags missing or empty data-concept-id', () => {
-  const noMarkersErrors = []
-  checkHtml('<div><span>no concepts here</span></div>', new Set(['c1']), noMarkersErrors)
+// --- In-Memory verifyReport: HTML & Concept Markers -------------------------
+
+test('verifyReport: flags missing or empty data-concept-id in architecture.html', async () => {
+  const noMarkersErrors = await verifyErrors(validBundle({ 'architecture.html': '<style>' + VALID_PALETTE + '</style><div><span>no concepts here</span></div>' }))
   assert.ok(noMarkersErrors.some(e => e.includes('carries no data-concept-id')))
 
-  const emptyMarkerErrors = []
-  checkHtml('<div data-concept-id=""></div>', new Set(['c1']), emptyMarkerErrors)
+  const emptyMarkerErrors = await verifyErrors(validBundle({ 'architecture.html': '<style>' + VALID_PALETTE + '</style><div data-concept-id=""></div>' }))
   assert.ok(emptyMarkerErrors.some(e => e.includes('empty data-concept-id')))
 
-  const unknownMarkerErrors = []
-  checkHtml('<div data-concept-id="unregistered"></div>', new Set(['c1']), unknownMarkerErrors)
+  const unknownMarkerErrors = await verifyErrors(validBundle({ 'architecture.html': '<style>' + VALID_PALETTE + '</style><div data-concept-id="unregistered"></div>' }))
   assert.ok(unknownMarkerErrors.some(e => e.includes('references concept "unregistered", which is not in the index')))
 })
 
-test('checkHtml: enforces search control threshold (> 10 concepts)', () => {
-  const manyConcepts = new Set(Array.from({ length: 11 }, (_, i) => `c${i}`))
-  const htmlWithoutSearch = Array.from(manyConcepts).map(id => `<div data-concept-id="${id}"></div>`).join('')
-
-  const errorsWithoutSearch = []
-  checkHtml(htmlWithoutSearch, manyConcepts, errorsWithoutSearch)
+test('verifyReport: enforces search control threshold (> 10 concepts)', async () => {
+  const manyConcepts = Array.from({ length: 11 }, (_, i) => ({
+    id: `c${i}`,
+    name: `Concept ${i}`,
+    summary: `Concept ${i} summary`,
+    evidence: ['src/main.ts:1'],
+    confidence: 'confirmed',
+  }))
+  const indexWithManyConcepts = {
+    ...VALID_INDEX,
+    concepts: manyConcepts,
+    relationships: [],
+    flows: [],
+  }
+  const htmlWithoutSearch = '<style>' + VALID_PALETTE + '</style>' + manyConcepts.map(c => `<div data-concept-id="${c.id}"></div>`).join('')
+  const errorsWithoutSearch = await verifyErrors(validBundle({
+    'index.json': indexWithManyConcepts,
+    'architecture.html': htmlWithoutSearch,
+  }))
   assert.ok(errorsWithoutSearch.some(e => e.includes(`has 11 concepts but no search control (required above ${SEARCH_CONCEPT_THRESHOLD})`)))
 
-  const errorsWithSearch = []
-  const htmlWithSearch = `<input type="search" />` + htmlWithoutSearch
-  checkHtml(htmlWithSearch, manyConcepts, errorsWithSearch)
-  assert.equal(errorsWithSearch.length, 0)
+  const htmlWithSearch = '<input type="search" />' + htmlWithoutSearch
+  const errorsWithSearch = await verifyErrors(validBundle({
+    'index.json': indexWithManyConcepts,
+    'architecture.html': htmlWithSearch,
+  }))
+  assert.equal(errorsWithSearch.filter(e => e.includes('search control')).length, 0)
 })
 
-test('checkHtml: rejects download attributes and archive links', () => {
-  const downloadErrors = []
-  checkHtml('<a href="data.json" download>Download</a><div data-concept-id="c1"></div>', new Set(['c1']), downloadErrors)
+test('verifyReport: rejects download attributes and archive links', async () => {
+  const downloadHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>') + '<a href="data.json" download>Download</a>'
+  const downloadErrors = await verifyErrors(validBundle({ 'architecture.html': downloadHtml }))
   assert.ok(downloadErrors.some(e => e.includes('offers a source-code download control')))
 
-  const archiveErrors = []
-  checkHtml('<a href="archive.zip">Code</a><div data-concept-id="c1"></div>', new Set(['c1']), archiveErrors)
+  const archiveHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>') + '<a href="archive.zip">Code</a>'
+  const archiveErrors = await verifyErrors(validBundle({ 'architecture.html': archiveHtml }))
   assert.ok(archiveErrors.some(e => e.includes('offers a source-code download control')))
 })
 
-test('checkHtml: reads a comment as prose, not as a control', () => {
-  const errors = []
-  checkHtml('<!-- the template forbids a download control --><div data-concept-id="c1"></div>', new Set(['c1']), errors)
+test('verifyReport: reads a comment as prose, not as a control', async () => {
+  const commentHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>') + '<!-- the template forbids a download control -->'
+  const errors = await verifyErrors(validBundle({ 'architecture.html': commentHtml }))
   assert.deepEqual(errors, [])
 })
 
-test('checkPalette: detects missing or mismatched palette variables', () => {
-  const template = `:root { --bg: #17191d; --accent: #c9f36b; }`
+// --- In-Memory verifyReport: Palette Verification ---------------------------
 
-  const validHtml = `<style>:root { --bg: #17191d; --accent: #c9f36b; }</style>`
-  const validErrors = []
-  checkPalette(validHtml, template, validErrors)
-  assert.equal(validErrors.length, 0)
+test('verifyReport: detects missing or mismatched palette variables', async () => {
+  const template = `:root { --canvas: #17191d; --focus: #c9f36b; }`
 
-  const missingVarHtml = `<style>:root { --bg: #17191d; }</style>`
-  const missingVarErrors = []
-  checkPalette(missingVarHtml, template, missingVarErrors)
-  assert.ok(missingVarErrors.some(e => e.includes('missing palette variable --accent')))
+  const validHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>', {
+    css: `<style>:root { --canvas: #17191d; --focus: #c9f36b; }</style>`,
+    palette: false,
+  })
+  const validErrors = await verifyErrors(validBundle({ 'architecture.html': validHtml }), { templateHtml: template })
+  assert.deepEqual(validErrors.filter(e => e.includes('palette')), [])
 
-  const mismatchedHtml = `<style>:root { --bg: #ffffff; --accent: #c9f36b; }</style>`
-  const mismatchedErrors = []
-  checkPalette(mismatchedHtml, template, mismatchedErrors)
-  assert.ok(mismatchedErrors.some(e => e.includes('sets --bg to #ffffff; the template defines #17191d')))
+  const missingVarHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>', {
+    css: `<style>:root { --canvas: #17191d; }</style>`,
+    palette: false,
+  })
+  const missingVarErrors = await verifyErrors(validBundle({ 'architecture.html': missingVarHtml }), { templateHtml: template })
+  assert.ok(missingVarErrors.some(e => e.includes('missing palette variable --focus')))
 
-  const noPaletteHtml = `<div>No style</div>`
-  const noPaletteErrors = []
-  checkPalette(noPaletteHtml, template, noPaletteErrors)
+  const mismatchedHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>', {
+    css: `<style>:root { --canvas: #ffffff; --focus: #c9f36b; }</style>`,
+    palette: false,
+  })
+  const mismatchedErrors = await verifyErrors(validBundle({ 'architecture.html': mismatchedHtml }), { templateHtml: template })
+  assert.ok(mismatchedErrors.some(e => e.includes('sets --canvas to #ffffff; the template defines #17191d')))
+
+  const noPaletteHtml = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234"/>', {
+    css: ``,
+    palette: false,
+  })
+  const noPaletteErrors = await verifyErrors(validBundle({ 'architecture.html': noPaletteHtml }), { templateHtml: template })
   assert.ok(noPaletteErrors.some(e => e.includes('has no :root palette')))
 })
 
-test('paletteOf: extracts lowercase CSS variables accurately', () => {
-  const html = `<style>:root { --Canvas: #121212; --TEXT-PRIMARY: #FAFAFA; }</style>`
-  const vars = paletteOf(html)
-  assert.deepEqual(vars, {
-    '--canvas': '#121212',
-    '--text-primary': '#fafafa',
-  })
+// --- In-Memory verifyReport: Secrets & Context Budget -----------------------
+
+test('verifyReport: flags credentials and secret patterns in-memory', async () => {
+  const errors = await verifyErrors(validBundle({ 'context.md': 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456' }))
+  assert.ok(errors.some(e => e.includes('context.md looks like it contains a GitHub token')))
 })
 
-test('checkSecrets: flags credentials and secret patterns', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'report-secrets-test-'))
-  try {
-    await writeFile(join(tempDir, 'context.md'), 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456')
-    const errors = []
-    await checkSecrets(tempDir, errors)
-    assert.ok(errors.some(e => e.includes('context.md looks like it contains a GitHub token')))
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
-  }
+test('verifyReport: flags context.md exceeding byte limit in-memory', async () => {
+  const oversizedContent = 'x'.repeat(MAX_CONTEXT_BYTES + 10)
+  const errors = await verifyErrors(validBundle({ 'context.md': oversizedContent }))
+  assert.ok(errors.some(e => e.includes(`the budget is ${MAX_CONTEXT_BYTES}`)))
 })
 
-test('checkContextBudget: flags context.md exceeding byte limit', async () => {
-  const tempDir = await mkdtemp(join(tmpdir(), 'report-budget-test-'))
-  try {
-    const oversizedContent = 'x'.repeat(MAX_CONTEXT_BYTES + 10)
-    await writeFile(join(tempDir, 'context.md'), oversizedContent)
-    const errors = []
-    await checkContextBudget(tempDir, { 'context.md': true }, errors)
-    assert.ok(errors.some(e => e.includes(`the budget is ${MAX_CONTEXT_BYTES}`)))
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
-  }
-})
+// --- In-Memory verifyReport: Diagram Layout Geometry ------------------------
 
-// --- checkLayout -----------------------------------------------------------
-
-// A node is a 60x60 tile centred on its column, with its label underneath; the
-// module measures the 132x100 footprint the geometry file defines, not the tile.
-function node(id, { cx, tileY, title, subtitle, mark = 'FN', logo = null, both = false }) {
-  const showCode = logo ? both : mark !== null
-  const code = showCode
-    ? `\n    <text class="tile-mark" x="${cx}" y="${tileY + 37}" text-anchor="middle">${mark}</text>` : ''
-  const face = `${code}${logo ? `\n    ${logo}` : ''}`
-  return `<a class="diagram-node" href="#detail-${id}" data-concept-id="concept-${id}">
-    <rect class="tile tile-focus" x="${cx - 30}" y="${tileY}" width="60" height="60" rx="12"></rect>${face}
-    <text class="node-title" x="${cx}" y="${tileY + 78}" text-anchor="middle">${title}</text>
-    <text class="node-subtitle" x="${cx}" y="${tileY + 96}" text-anchor="middle">${subtitle}</text>
-  </a>`
-}
-
-// The template's stated type sizes, which the module reads from the report's CSS.
-const DIAGRAM_CSS = `<style>
-  .node-title { font-size: 13px; }
-  .node-subtitle { font-size: 11px; }
-  .edge-label { font-size: 11px; }
-  .boundary-label { font-size: 12px; }
-</style>`
-
-function diagram(body, { viewBox = '0 0 1040 240', title = 'Probe view', css = DIAGRAM_CSS } = {}) {
-  return `${css}<svg class="diagram" viewBox="${viewBox}" role="group"><title>${title}</title>${body}</svg>`
-}
-
-// The two columns the committed example uses, so every case below starts clean.
-const PAIR = node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id: string' })
-  + node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handleRequest' })
-
-function layoutErrors(html) {
-  const errors = []
-  checkLayout(html, errors)
-  return errors
-}
-
-test('checkLayout: accepts the example\'s own coordinates', () => {
+test('verifyReport: accepts the example\'s own coordinates', async () => {
   const html = diagram(PAIR + '<path class="edge-focus" d="M186 120 H234" marker-end="url(#a)"/>')
-  assert.deepEqual(layoutErrors(html), [])
+  assert.deepEqual(await verifyErrors(validBundle({ 'architecture.html': html })), [])
 })
 
-test('checkLayout: accepts a vertical edge that leaves below its own label', () => {
+test('verifyReport: accepts a vertical edge that leaves below its own label', async () => {
+  const indexWithC = {
+    ...VALID_INDEX,
+    concepts: [
+      ...VALID_INDEX.concepts,
+      { id: 'concept-c', name: 'Store', summary: 'Storage', evidence: ['src/main.ts:20'], confidence: 'confirmed' },
+    ],
+  }
   const html = diagram(
     PAIR + node('c', { cx: 120, tileY: 250, title: 'Store', subtitle: 'records.json', mark: 'DB' })
       + '<path class="edge-muted" d="M120 190 V250" marker-end="url(#a)"/>',
     { viewBox: '0 0 1040 400' },
   )
-  assert.deepEqual(layoutErrors(html), [])
+  assert.deepEqual(await verifyErrors(validBundle({ 'index.json': indexWithC, 'architecture.html': html })), [])
 })
 
-test('checkLayout: passes over the committed example report', async () => {
+test('verifyReport: passes over the committed example report architecture.html', async () => {
   const html = await readFile('examples/tiny-app/reports/codebase-map/tiny-app/architecture.html', 'utf8')
-  assert.deepEqual(layoutErrors(html), [])
+  const index = JSON.parse(await readFile('examples/tiny-app/reports/codebase-map/tiny-app/index.json', 'utf8'))
+  const errors = await verifyErrors(validBundle({ 'index.json': index, 'architecture.html': html }))
+  assert.deepEqual(errors, [])
 })
 
-test('checkLayout: flags a node running past the viewBox padding', () => {
+test('verifyReport: flags a node running past the viewBox padding', async () => {
   const html = diagram(node('a', { cx: 980, tileY: 90, title: 'Wide node here', subtitle: 'database.read' }))
-  const errors = layoutErrors(html)
-  assert.equal(errors.length, 2)
-  assert.match(errors[0], /runs past the viewBox padding/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('runs past the viewBox padding')))
 })
 
-test('checkLayout: flags a title over the character budget', () => {
+test('verifyReport: flags a title over the character budget', async () => {
   const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Extremely long title', subtitle: 'id' }))
-  assert.match(layoutErrors(html).join('\n'), /gives title 16 characters at 13px but holds 20/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('gives title 16 characters at 13px but holds 20')))
 })
 
-test('checkLayout: flags overlapping nodes', () => {
+test('verifyReport: flags overlapping nodes', async () => {
   const html = diagram(PAIR.replace('x="270"', 'x="134"'))
-  assert.match(layoutErrors(html).join('\n'), /nodes at x=54 y=90 and x=98 y=90 overlap/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('overlap')))
 })
 
-test('checkLayout: flags an edge that starts in thin air', () => {
+test('verifyReport: flags an edge that starts in thin air', async () => {
   const html = diagram(PAIR + '<path class="edge-focus" d="M200 120 H234"/>')
-  assert.match(layoutErrors(html).join('\n'), /not attached to a node boundary at the source/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('not attached to a node boundary at the source')))
 })
 
-test('checkLayout: flags an edge running through a node it does not connect', () => {
+test('verifyReport: flags an edge running through a node it does not connect', async () => {
+  const indexWithC = {
+    ...VALID_INDEX,
+    concepts: [
+      ...VALID_INDEX.concepts,
+      { id: 'concept-c', name: 'Repository', summary: 'Repo', evidence: ['src/main.ts:20'], confidence: 'confirmed' },
+    ],
+  }
   const third = node('c', { cx: 480, tileY: 90, title: 'Repository', subtitle: 'repository.find', mark: 'DB' })
   const html = diagram(PAIR + third + '<path class="edge-muted" d="M186 120 H414"/>')
-  assert.match(layoutErrors(html).join('\n'), /runs through the node at x=234 y=90/)
+  const errors = await verifyErrors(validBundle({ 'index.json': indexWithC, 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('runs through the node at x=234 y=90')))
 })
 
-test('checkLayout: flags an edge label sitting on a node footprint', () => {
+test('verifyReport: flags an edge label sitting on a node footprint', async () => {
   const html = diagram(PAIR + '<text class="edge-label" x="300" y="140" text-anchor="middle">read</text>')
-  assert.match(layoutErrors(html).join('\n'), /label "read" sits on top of the node at x=234 y=90/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('label "read" sits on top of the node at x=234 y=90')))
 })
 
-test('checkLayout: flags a diagram without a usable viewBox', () => {
-  const errors = layoutErrors(diagram(PAIR, { viewBox: 'nope' }))
-  assert.match(errors.join('\n'), /no parsable viewBox/)
+test('verifyReport: flags a diagram without a usable viewBox', async () => {
+  const html = diagram(PAIR, { viewBox: 'nope' })
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.ok(errors.some(e => e.includes('no parsable viewBox')))
 })
 
-test('checkLayout: skips a label budget it has no type size for', () => {
+test('verifyReport: skips a label budget it has no type size for', async () => {
   const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Extremely long title', subtitle: 'id' }), { css: '' })
-  assert.deepEqual(layoutErrors(html), [])
+  const errors = await verifyErrors(validBundle({ 'architecture.html': html }))
+  assert.deepEqual(errors.filter(e => e.includes('characters')), [])
 
   const collision = diagram(PAIR + '<text class="edge-label" x="300" y="140" text-anchor="middle">read</text>', { css: '' })
-  assert.deepEqual(layoutErrors(collision), [])
+  const collisionErrors = await verifyErrors(validBundle({ 'architecture.html': collision }))
+  assert.deepEqual(collisionErrors.filter(e => e.includes('sits on top of the node')), [])
 })
 
-test('checkLayout: reads the type size the report states, not a constant', () => {
+test('verifyReport: reads the type size the report states, not a constant', async () => {
   const wide = diagram(
     node('a', { cx: 120, tileY: 90, title: 'Extremely long title', subtitle: 'id' }),
     { css: '<style>.node-title{font-size:9px}.node-subtitle{font-size:11px}</style>' },
   )
-  assert.deepEqual(layoutErrors(wide), [])
+  const errors = await verifyErrors(validBundle({ 'architecture.html': wide }))
+  assert.deepEqual(errors.filter(e => e.includes('characters')), [])
 })
 
-test('checkLayout: flags a diagram whose nodes it cannot see', () => {
+test('verifyReport: flags a diagram whose nodes it cannot see', async () => {
   const boxes = '<a class="diagram-node" data-concept-id="concept-a"><rect class="node-focus" x="38" y="90" width="126" height="64"></rect></a>'
-  assert.match(layoutErrors(diagram(boxes)).join('\n'), /no <rect class="tile">/)
+  const errors = await verifyErrors(validBundle({ 'architecture.html': diagram(boxes) }))
+  assert.ok(errors.some(e => e.includes('no <rect class="tile">')))
 })
 
-test('checkLayout: skips geometry it cannot decide', () => {
+test('verifyReport: skips geometry it cannot decide', async () => {
   const relative = diagram(PAIR + '<path class="edge-focus" d="m186 120 h48"/>')
-  assert.deepEqual(layoutErrors(relative), [])
+  assert.deepEqual(await verifyErrors(validBundle({ 'architecture.html': relative })), [])
 
   const curved = diagram(PAIR + '<path class="edge-focus" d="M186 120 C210 120 210 120 234 120"/>')
-  assert.deepEqual(layoutErrors(curved), [])
+  assert.deepEqual(await verifyErrors(validBundle({ 'architecture.html': curved })), [])
 
   const lone = diagram(node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id' }))
-  assert.deepEqual(layoutErrors(lone), [])
+  assert.deepEqual(await verifyErrors(validBundle({ 'architecture.html': lone })), [])
 })
 
-// --- checkMarks ------------------------------------------------------------
+// --- In-Memory verifyReport: Technology Marks -------------------------------
 
-// A stand-in for docs/technology-marks.json with paths short enough to assert on.
 const MARKS = {
   box: 24,
   marks: [
@@ -367,9 +496,13 @@ const MARKS = {
 }
 
 const REACT_INDEX = {
+  schemaVersion: 1,
   repository: { name: 'probe' },
-  files: [{ id: 'f1', path: 'src/view.tsx', kind: 'source', summary: 'Renders the record', evidence: ['src/view.tsx:2'], confidence: 'confirmed' }],
-  concepts: [{ id: 'c1', name: 'React view', summary: 'Shows the record', evidence: ['src/view.tsx:2'], confidence: 'confirmed' }],
+  files: [{ id: 'f1', path: 'src/view.tsx', kind: 'source', summary: 'Renders the react record', evidence: ['src/view.tsx:2'], confidence: 'confirmed', symbols: [] }],
+  concepts: [
+    { id: 'concept-a', name: 'Main view', summary: 'Shows the record', evidence: ['src/view.tsx:2'], confidence: 'confirmed' },
+    { id: 'concept-b', name: 'Handler', summary: 'Handler func', evidence: ['src/view.tsx:2'], confidence: 'confirmed' },
+  ],
   relationships: [],
   flows: [],
   gaps: [],
@@ -381,78 +514,85 @@ function logo({ cx = 120, tileY = 90, slug = 'react', path = 'M0 0 H24 V24 Z', t
   return `    <g class="tile-logo" data-tech="${slug}"${tint} transform="${placed}"><path d="${path}"></path></g>`
 }
 
-function markErrors(html, { index = REACT_INDEX, marks = MARKS } = {}) {
-  const errors = []
-  checkMarks(html, errors, marks, index ? detectTechnologies(index, marks) : null)
-  return errors
-}
-
-test('checkMarks: accepts a mark the index names, drawn as vendored', () => {
+test('verifyReport: accepts a mark the index names, drawn as vendored', async () => {
   const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Record request', subtitle: 'id' })
     + node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handleRequest', logo: logo({ cx: 300 }) }))
-  assert.deepEqual(markErrors(html), [])
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.deepEqual(errors, [])
 })
 
-test('checkMarks: flags a mark the index does not name', () => {
+test('verifyReport: flags a mark the index does not name', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Store', subtitle: 'records', logo: logo({ slug: 'postgresql', path: 'M4 4 L20 20' }) }))
-  assert.match(markErrors(html).join('\n'), /"postgresql" mark is not backed by index.json/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('"postgresql" mark is not backed by index.json')))
 })
 
-test('checkMarks: flags a slug that is not vendored', () => {
+test('verifyReport: flags a slug that is not vendored', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'svelte' }) }))
-  assert.match(markErrors(html).join('\n'), /"svelte" is not a mark in docs\/technology-marks.json/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('"svelte" is not a mark in docs/technology-marks.json')))
 })
 
-test('checkMarks: flags a path that was redrawn rather than copied', () => {
+test('verifyReport: flags a path that was redrawn rather than copied', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ path: 'M0 0 H12 V12 Z' }) }))
-  assert.match(markErrors(html).join('\n'), /"react" mark is not the path in docs\/technology-marks.json/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('"react" mark is not the path in docs/technology-marks.json')))
 })
 
-test('checkMarks: flags a recoloured mark', () => {
+test('verifyReport: flags a recoloured mark', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ colour: '#61DAFB' }) }))
-  assert.match(markErrors(html).join('\n'), /carries its own colour/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('carries its own colour')))
 })
 
-test('checkMarks: flags a mark that overruns its tile', () => {
+test('verifyReport: flags a mark that overruns its tile', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ transform: 'translate(20 20) scale(4)' }) }))
-  assert.match(markErrors(html).join('\n'), /which is not inside its tile at x=90 y=90/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('which is not inside its tile at x=90 y=90')))
 })
 
-test('checkMarks: flags a mark whose placement it cannot read', () => {
+test('verifyReport: flags a mark whose placement it cannot read', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ transform: 'rotate(12)' }) }))
-  assert.match(markErrors(html).join('\n'), /needs a transform that places its 24x24 path inside the tile/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('needs a transform that places its 24x24 path inside the tile')))
 })
 
-test('checkMarks: flags a tile carrying a mark and a kind code', () => {
+test('verifyReport: flags a tile carrying a mark and a kind code', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo(), both: true }))
-  assert.match(markErrors(html).join('\n'), /carries both a technology mark and a kind code/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('carries both a technology mark and a kind code')))
 })
 
-test('checkMarks: flags a tile carrying neither', () => {
+test('verifyReport: flags a tile carrying neither', async () => {
   const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', mark: null }))
-  assert.match(markErrors(html).join('\n'), /neither a technology mark nor a kind code/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('neither a technology mark nor a kind code')))
 })
 
-test('checkMarks: flags a mark whose slug is missing', () => {
+test('verifyReport: flags a mark whose slug is missing', async () => {
   const bare = '    <g class="tile-logo" transform="translate(285 105) scale(1.25)"><path d="M0 0 H24 V24 Z"></path></g>'
   const html = diagram(node('b', { cx: 300, tileY: 90, title: 'Handler', subtitle: 'handler', logo: bare }))
-  assert.match(markErrors(html).join('\n'), /has no data-tech/)
+  const errors = await verifyErrors(validBundle({ 'index.json': REACT_INDEX, 'architecture.html': html }), { marks: MARKS })
+  assert.ok(errors.some(e => e.includes('has no data-tech')))
 })
 
-test('checkMarks: says so when the marks file was never read', () => {
-  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo() }))
-  assert.match(markErrors(html, { marks: null }).join('\n'), /docs\/technology-marks.json was not read/)
+test('verifyReport: matches tokens, not substrings for technology backing', async () => {
+  const probe = (text) => ({
+    ...REACT_INDEX,
+    files: [{ id: 'f1', path: text, kind: 'source', summary: text, evidence: ['a:1'], confidence: 'confirmed', symbols: [] }],
+  })
+  const html = diagram(node('b', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'react' }) }))
+
+  // "src/react.tsx" has "react" token -> valid
+  const matchErrors = await verifyErrors(validBundle({ 'index.json': probe('src/react.tsx'), 'architecture.html': html }), { marks: MARKS })
+  assert.deepEqual(matchErrors.filter(e => e.includes('"react" mark is not backed')), [])
+
+  // "reactive form state" has "reactive" (substring only) -> flagged
+  const nonMatchErrors = await verifyErrors(validBundle({ 'index.json': probe('reactive form state'), 'architecture.html': html }), { marks: MARKS })
+  assert.ok(nonMatchErrors.some(e => e.includes('"react" mark is not backed by index.json')))
 })
 
-test('detectTechnologies: matches tokens, not substrings', () => {
-  const names = (text) => [...detectTechnologies({ repository: { name: 'probe' }, files: [{ path: text, summary: text }], concepts: [] }, MARKS)]
-  assert.deepEqual(names('src/react.tsx'), ['react'])
-  assert.deepEqual(names('reactive form state'), [])
-  assert.deepEqual(names('PostgreSQL dump'), ['postgresql'])
-  assert.deepEqual(names('postgres://user'), ['postgresql'])
-  assert.deepEqual(names('.github/workflows/ci.yml'), ['githubactions'])
-  assert.deepEqual(names('github actions matrix'), ['githubactions'])
-})
+// --- Asset Verification: technology-marks.json ------------------------------
 
 test('technology marks asset: every mark is vendored and complete', async () => {
   const marks = JSON.parse(await readFile(new URL('../docs/technology-marks.json', import.meta.url), 'utf8'))

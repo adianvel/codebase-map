@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import {
   verifyReport,
   checkReport,
+  parseDiagrams,
   REQUIRED_FILES,
   SEARCH_CONCEPT_THRESHOLD,
   MAX_CONTEXT_BYTES,
@@ -606,4 +607,36 @@ test('technology marks asset: every mark is vendored and complete', async () => 
     assert.match(mark.path, /^M-?[\d.]/)
     assert.doesNotMatch(mark.path, /\s\s/, `${mark.slug} path is not normalised`)
   }
+})
+
+// --- Synchronous In-Memory Seam & Diagram Model Tests -----------------------
+
+test('verifyReport: is fully synchronous and requires no options for default contract', () => {
+  const bundle = validBundle()
+  const result = verifyReport(bundle)
+  assert.equal(typeof result.then, 'undefined', 'verifyReport must return an object synchronously, not a Promise')
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+})
+
+test('parseDiagrams: extracts unified DiagramModel with nodes, footprints, and technology marks', () => {
+  const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'react' }) }))
+  const diagrams = parseDiagrams(html)
+  assert.equal(diagrams.length, 1)
+  const diag = diagrams[0]
+  assert.equal(diag.nodes.length, 1)
+  const n = diag.nodes[0]
+  assert.equal(n.width, 132)
+  assert.equal(n.height, 100)
+  assert.equal(n.tile.width, 60)
+  assert.equal(n.tile.height, 60)
+  assert.ok(n.logo)
+  assert.equal(n.logo.slug, 'react')
+  assert.equal(n.kindCode, false)
+})
+
+test('verifyReport: verifies technology marks using default contract marks without options', () => {
+  const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'unknown-tech-slug' }) }))
+  const errors = verifyReport(validBundle({ 'architecture.html': html })).errors
+  assert.ok(errors.some(e => e.includes('"unknown-tech-slug" is not a mark in docs/technology-marks.json')))
 })

@@ -19,6 +19,7 @@
  * Zero dependencies, so it runs anywhere Node runs.
  */
 
+import { readFileSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,6 +65,16 @@ export const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta
 // The only marks a report may draw. A path outside this file is a mark somebody
 // drew from memory, which is the failure mode this asset exists to prevent.
 export const MARKS_PATH = new URL('../docs/technology-marks.json', import.meta.url)
+
+let defaultTemplateHtml = null
+try {
+  defaultTemplateHtml = readFileSync(TEMPLATE_PATH, 'utf8')
+} catch {}
+
+let defaultMarks = null
+try {
+  defaultMarks = JSON.parse(readFileSync(MARKS_PATH, 'utf8'))
+} catch {}
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -283,6 +294,17 @@ function numberAttribute(el, name) {
   return Number.isFinite(value) ? value : NaN
 }
 
+function transformOf(el) {
+  const raw = attribute(el, 'transform')
+  if (!raw) return null
+  const move = raw.match(/translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/)
+  const zoom = raw.match(/scale\(\s*(-?[\d.]+)\s*\)/)
+  if (!move || !zoom) return null
+  return { x: parseFloat(move[1]), y: parseFloat(move[2]), scale: parseFloat(zoom[1]) }
+}
+
+const COLOUR_ATTRIBUTE = /\b(?:fill|stroke|color|style)\s*=/i
+
 function decodedText(raw) {
   return raw.replace(/&(?:[a-z]+|#\d+|#[xX][0-9a-fA-F]+);/g, 'x')
 }
@@ -388,7 +410,7 @@ function crossesBox(x1, y1, x2, y2, box) {
   return left < boxRight && right > boxLeft && top < boxBottom && bottom > boxTop
 }
 
-function parseDiagram(svg, html) {
+export function parseDiagram(svg, html) {
   const viewBox = viewBoxOf(svg)
   const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
   const nodes = []
@@ -414,6 +436,26 @@ function parseDiagram(svg, html) {
       if (fontSize === null) continue
       box.labels.push({ kind: match[1], chars: decodedText(match[2]).length, fontSize })
     }
+
+    const logoMatch = block.match(/<g\b[^>]*class="[^"]*\btile-logo\b[^"]*"[\s\S]*?<\/g>/)
+    const kindCode = /class="[^"]*\btile-mark\b/.test(block)
+    let logo = null
+    if (logoMatch) {
+      const groupMatch = logoMatch[0].match(/^<g\b[^>]*>/)
+      const group = groupMatch ? groupMatch[0] : ''
+      const pathMatch = logoMatch[0].match(/<path\b[^>]*\bd\s*=\s*"([^"]*)"/)
+      logo = {
+        raw: logoMatch[0],
+        group,
+        slug: attribute(group, 'data-tech'),
+        hasColour: COLOUR_ATTRIBUTE.test(logoMatch[0]),
+        path: pathMatch ? pathMatch[1] : null,
+        placed: transformOf(group),
+      }
+    }
+    box.logo = logo
+    box.kindCode = kindCode
+
     nodes.push(box)
   }
 
@@ -439,22 +481,26 @@ function parseDiagram(svg, html) {
     })
   }
 
-  return { viewBox, name: title ? title[1].trim() : 'diagram', nodes, edges, labels }
+  return { viewBox, name: title ? title[1].trim() : 'diagram', nodes, edges, labels, raw: svg }
 }
 
-function checkLayout(html, errors = []) {
+export function parseDiagrams(html) {
   const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
+  return diagrams.map(svg => parseDiagram(svg, html))
+}
+
+function checkLayout(diagrams, html, errors = []) {
   if (diagrams.length === 0) return
 
-  for (const svg of diagrams) {
-    const { viewBox, name, nodes, edges, labels } = parseDiagram(svg, html)
+  for (const diagram of diagrams) {
+    const { viewBox, name, nodes, edges, labels, raw } = diagram
     if (!viewBox) {
       errors.push(`${name}: diagram has no parsable viewBox; the fit rules need bounds`)
       continue
     }
     // A diagram whose nodes the parser cannot see would pass every rule below
     // by accident, so say so rather than reporting a clean picture.
-    if (nodes.length === 0 && /class="[^"]*\bdiagram-node\b/.test(svg)) {
+    if (nodes.length === 0 && /class="[^"]*\bdiagram-node\b/.test(raw)) {
       errors.push(`${name}: diagram has diagram nodes but no <rect class="tile">; the node shape in docs/diagram-geometry.md is what the fit rules measure`)
       continue
     }
@@ -591,38 +637,20 @@ function detectTechnologies(index, marks) {
   return backed
 }
 
-function transformOf(el) {
-  const raw = attribute(el, 'transform')
-  if (!raw) return null
-  const move = raw.match(/translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/)
-  const zoom = raw.match(/scale\(\s*(-?[\d.]+)\s*\)/)
-  if (!move || !zoom) return null
-  return { x: parseFloat(move[1]), y: parseFloat(move[2]), scale: parseFloat(zoom[1]) }
-}
-
 function normalizedPath(d) {
   return d.replace(/\s+/g, ' ').trim()
 }
-
-const COLOUR_ATTRIBUTE = /\b(?:fill|stroke|color|style)\s*=/i
 
 // A mark is borrowed identity, so it is checked three ways: it must be a real
 // slug, drawn from the vendored path, in the ink the template sets, placed
 // inside its tile, and — the rule that keeps the map honest — named by the
 // index rather than assumed from how the repository looks.
-function checkMarks(html, errors = [], marks = null, backed = null) {
-  const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
+function checkMarks(diagrams, errors = [], marks = null, backed = null) {
   const bySlug = marks && marks.marks ? new Map(marks.marks.map(m => [m.slug, m])) : null
 
-  for (const svg of diagrams) {
-    const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
-    const name = title ? title[1].trim() : 'diagram'
-    for (const block of (svg.match(/<a\b[\s\S]*?<\/a>/g) || [])) {
-      const rect = block.match(/<rect\b[^>]*class="[^"]*\btile\b[^"]*"[^>]*>/)
-      if (!rect) continue
-      const tile = boxOf(rect[0])
-      const logo = block.match(/<g\b[^>]*class="[^"]*\btile-logo\b[^"]*"[\s\S]*?<\/g>/)
-      const kindCode = /class="[^"]*\btile-mark\b/.test(block)
+  for (const { name, nodes } of diagrams) {
+    for (const node of nodes) {
+      const { tile, logo, kindCode } = node
 
       if (!logo) {
         if (!kindCode) {
@@ -635,8 +663,7 @@ function checkMarks(html, errors = [], marks = null, backed = null) {
         errors.push(`${name}: the tile at x=${tile.x} y=${tile.y} carries both a technology mark and a kind code; a tile shows one`)
       }
 
-      const group = logo[0].match(/^<g\b[^>]*>/)[0]
-      const slug = attribute(group, 'data-tech')
+      const slug = logo.slug
       if (!slug) {
         errors.push(`${name}: a tile-logo has no data-tech; the check cannot tell which technology it claims`)
         continue
@@ -653,14 +680,13 @@ function checkMarks(html, errors = [], marks = null, backed = null) {
         continue
       }
 
-      if (COLOUR_ATTRIBUTE.test(group) || COLOUR_ATTRIBUTE.test(logo[0])) {
+      if (logo.hasColour) {
         errors.push(`${name}: the "${slug}" mark carries its own colour; the template sets one ink for every mark and a brand path is never recoloured`)
       }
 
-      const path = logo[0].match(/<path\b[^>]*\bd\s*=\s*"([^"]*)"/)
-      if (!path) {
+      if (!logo.path) {
         errors.push(`${name}: the "${slug}" mark has no <path d>; copy the vendored path into it`)
-      } else if (normalizedPath(path[1]) !== normalizedPath(mark.path)) {
+      } else if (normalizedPath(logo.path) !== normalizedPath(mark.path)) {
         errors.push(`${name}: the "${slug}" mark is not the path in docs/technology-marks.json; copy it verbatim or drop the mark`)
       }
 
@@ -668,7 +694,7 @@ function checkMarks(html, errors = [], marks = null, backed = null) {
         errors.push(`${name}: the "${slug}" mark is not backed by index.json; name the technology in the evidence or use the kind code`)
       }
 
-      const placed = transformOf(group)
+      const placed = logo.placed
       const box = marks && marks.box ? marks.box : 24
       if (!placed) {
         errors.push(`${name}: the "${slug}" mark needs a transform that places its ${box}x${box} path inside the tile; docs/diagram-geometry.md gives translate and scale`)
@@ -703,7 +729,7 @@ function checkContextBudget(bundle, errors = []) {
   }
 }
 
-export async function verifyReport(bundle, options = {}) {
+export function verifyReport(bundle, options = {}) {
   const errors = []
 
   if (!isPlainObject(bundle)) {
@@ -744,25 +770,34 @@ export async function verifyReport(bundle, options = {}) {
   if (typeof bundle['architecture.html'] === 'string') {
     const html = bundle['architecture.html']
     checkHtml(html, conceptIds, errors)
-    checkLayout(html, errors)
+
+    const diagrams = parseDiagrams(html)
+    checkLayout(diagrams, html, errors)
 
     let marks = options.marks
     if (marks === undefined) {
-      try {
-        marks = JSON.parse(await readFile(options.marksPath || MARKS_PATH, 'utf8'))
-      } catch {
-        marks = null
+      if (options.marksPath) {
+        try {
+          marks = JSON.parse(readFileSync(options.marksPath, 'utf8'))
+        } catch {
+          marks = null
+        }
+      } else {
+        marks = defaultMarks
       }
     }
-    checkMarks(html, errors, marks, index ? detectTechnologies(index, marks) : null)
+    checkMarks(diagrams, errors, marks, index ? detectTechnologies(index, marks) : null)
 
     let templateHtml = options.templateHtml
     if (templateHtml === undefined) {
-      const templatePath = options.templatePath || TEMPLATE_PATH
-      try {
-        templateHtml = await readFile(templatePath, 'utf8')
-      } catch {
-        templateHtml = null
+      if (options.templatePath) {
+        try {
+          templateHtml = readFileSync(options.templatePath, 'utf8')
+        } catch {
+          templateHtml = null
+        }
+      } else {
+        templateHtml = defaultTemplateHtml
       }
     }
     if (templateHtml) {
@@ -800,7 +835,29 @@ export async function checkReport(target, options = {}) {
     }
   }
 
-  const result = await verifyReport(bundle, options)
+  let marks = options.marks
+  if (marks === undefined && options.marksPath) {
+    try {
+      marks = JSON.parse(await readFile(options.marksPath, 'utf8'))
+    } catch {
+      marks = null
+    }
+  }
+
+  let templateHtml = options.templateHtml
+  if (templateHtml === undefined && options.templatePath) {
+    try {
+      templateHtml = await readFile(options.templatePath, 'utf8')
+    } catch {
+      templateHtml = null
+    }
+  }
+
+  const result = verifyReport(bundle, {
+    ...options,
+    ...(marks !== undefined ? { marks } : {}),
+    ...(templateHtml !== undefined ? { templateHtml } : {}),
+  })
 
   return {
     ok: result.ok,

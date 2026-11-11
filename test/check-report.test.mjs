@@ -1,14 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import {
-  verifyReport,
-  checkReport,
-  parseDiagrams,
-  REQUIRED_FILES,
-  SEARCH_CONCEPT_THRESHOLD,
-  MAX_CONTEXT_BYTES,
-} from '../scripts/check-report.mjs'
+import { verifyReport, checkReport } from '../scripts/check-report.mjs'
+import { parseDiagrams } from '../scripts/diagram-model.mjs'
+
+const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
+const SEARCH_CONCEPT_THRESHOLD = 10
+const MAX_CONTEXT_BYTES = 12 * 1024
+
+// Tests act as the FileSystem Adapter: they load the Report Contract
+// assets once and pass the resolved values into the Report Verifier.
+const CONTRACT = {
+  templateHtml: await readFile(new URL('../docs/report-template.html', import.meta.url), 'utf8'),
+  marks: JSON.parse(await readFile(new URL('../docs/technology-marks.json', import.meta.url), 'utf8')),
+  geometry: JSON.parse(await readFile(new URL('../docs/diagram-geometry.json', import.meta.url), 'utf8')),
+}
 
 // --- Minimal Valid Fixtures ------------------------------------------------
 
@@ -129,7 +135,7 @@ function validBundle(overrides = {}) {
 }
 
 async function verifyErrors(bundle, options = {}) {
-  const result = await verifyReport(bundle, options)
+  const result = await verifyReport(bundle, { ...CONTRACT, ...options })
   return result.errors
 }
 
@@ -156,7 +162,7 @@ test('checkReport: returns fatal error when directory does not exist', async () 
 // --- In-Memory verifyReport: Bundle Structure -------------------------------
 
 test('verifyReport: passes on a valid report bundle', async () => {
-  const result = await verifyReport(validBundle())
+  const result = await verifyReport(validBundle(), CONTRACT)
   assert.equal(result.ok, true)
   assert.deepEqual(result.errors, [])
 })
@@ -611,9 +617,9 @@ test('technology marks asset: every mark is vendored and complete', async () => 
 
 // --- Synchronous In-Memory Seam & Diagram Model Tests -----------------------
 
-test('verifyReport: is fully synchronous and requires no options for default contract', () => {
+test('verifyReport: is fully synchronous with resolved contract assets', () => {
   const bundle = validBundle()
-  const result = verifyReport(bundle)
+  const result = verifyReport(bundle, CONTRACT)
   assert.equal(typeof result.then, 'undefined', 'verifyReport must return an object synchronously, not a Promise')
   assert.equal(result.ok, true)
   assert.deepEqual(result.errors, [])
@@ -621,7 +627,7 @@ test('verifyReport: is fully synchronous and requires no options for default con
 
 test('parseDiagrams: extracts unified DiagramModel with nodes, footprints, and technology marks', () => {
   const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'react' }) }))
-  const diagrams = parseDiagrams(html)
+  const diagrams = parseDiagrams(html, CONTRACT.geometry)
   assert.equal(diagrams.length, 1)
   const diag = diagrams[0]
   assert.equal(diag.nodes.length, 1)
@@ -635,8 +641,8 @@ test('parseDiagrams: extracts unified DiagramModel with nodes, footprints, and t
   assert.equal(n.kindCode, false)
 })
 
-test('verifyReport: verifies technology marks using default contract marks without options', () => {
+test('verifyReport: verifies technology marks against supplied contract marks', () => {
   const html = diagram(node('a', { cx: 120, tileY: 90, title: 'Handler', subtitle: 'handler', logo: logo({ slug: 'unknown-tech-slug' }) }))
-  const errors = verifyReport(validBundle({ 'architecture.html': html })).errors
+  const errors = verifyReport(validBundle({ 'architecture.html': html }), CONTRACT).errors
   assert.ok(errors.some(e => e.includes('"unknown-tech-slug" is not a mark in docs/technology-marks.json')))
 })

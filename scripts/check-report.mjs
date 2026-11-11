@@ -11,41 +11,41 @@
  *
  * The palette is compared against docs/report-template.html, which is its single
  * home, so a colour cannot silently diverge between the template and a report.
- * The layout numbers come from docs/diagram-geometry.md, which is the one place
- * that states them; here they only decide what a coordinate can decide. A tile's
+ * The layout numbers come from docs/diagram-geometry.json, explained in docs/diagram-geometry.md; here they only decide what a coordinate can decide. A tile's
  * technology mark is compared against docs/technology-marks.json, so a mark can
  * only be a vendored one and only where the index names that technology.
  *
- * Zero dependencies, so it runs anywhere Node runs.
+ * The Report Verifier (verifyReport) has zero filesystem dependencies: the FileSystem Adapter (checkReport) loads every Report Contract asset and passes resolved values in. Zero dependencies, so it runs anywhere Node runs.
  */
 
-import { readFileSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
+import { parseDiagrams } from './diagram-model.mjs'
 
-export const CONFIDENCE = new Set(['confirmed', 'inferred', 'unknown'])
-export const FILE_KIND = new Set(['source', 'test', 'config', 'docs', 'asset', 'generated'])
-export const RELATIONSHIP_KIND = new Set([
+const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
+
+const CONFIDENCE = new Set(['confirmed', 'inferred', 'unknown'])
+const FILE_KIND = new Set(['source', 'test', 'config', 'docs', 'asset', 'generated'])
+const RELATIONSHIP_KIND = new Set([
   'calls', 'imports', 'routes', 'reads', 'writes', 'stores',
   'references', 'publishes', 'consumes', 'renders', 'tests',
 ])
-export const CARDINALITY = new Set([
+const CARDINALITY = new Set([
   'one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'unknown',
 ])
 
 // A report earns a search control once its overview stops fitting on one
 // screen. SKILL.md targets 10–15 concepts for the overview; this takes the
 // lower bound rather than inventing a second number.
-export const SEARCH_CONCEPT_THRESHOLD = 10
+const SEARCH_CONCEPT_THRESHOLD = 10
 
 // context.md is the orientation layer, not the index. Keep it loadable whole.
-export const MAX_CONTEXT_BYTES = 12 * 1024
+const MAX_CONTEXT_BYTES = 12 * 1024
 
 // High-signal shapes only. The bare word "secret" is not evidence of a leak.
-export const SECRET_PATTERNS = [
+const SECRET_PATTERNS = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key block'],
   [/\bAKIA[0-9A-Z]{16}\b/, 'AWS access key id'],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/, 'GitHub token'],
@@ -53,28 +53,19 @@ export const SECRET_PATTERNS = [
   [/\bsk-[A-Za-z0-9]{20,}\b/, 'API key'],
 ]
 
-export const DOWNLOAD_ATTRIBUTE = /\sdownload(?=[\s/>=])/i
-export const ARCHIVE_LINK = /href\s*=\s*"[^"]*\.(?:zip|tar|tgz|gz|rar|7z)"/i
-export const SEARCH_CONTROL = /(?:type\s*=\s*"search"|role\s*=\s*"search"|class\s*=\s*"[^"]*search|id\s*=\s*"[^"]*search"|<input[^>]*\bsearch\b)/i
-export const CONCEPT_MARKER = /\bdata-concept-id\s*=\s*"([^"]*)"/g
+const DOWNLOAD_ATTRIBUTE = /\sdownload(?=[\s/>=])/i
+const ARCHIVE_LINK = /href\s*=\s*"[^"]*\.(?:zip|tar|tgz|gz|rar|7z)"/i
+const SEARCH_CONTROL = /(?:type\s*=\s*"search"|role\s*=\s*"search"|class\s*=\s*"[^"]*search|id\s*=\s*"[^"]*search"|<input[^>]*\bsearch\b)/i
+const CONCEPT_MARKER = /\bdata-concept-id\s*=\s*"([^"]*)"/g
 
 // The report template is the single home for the palette. Compare against it so
 // a colour changed in one place cannot silently diverge from the others.
-export const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta.url)
+const TEMPLATE_PATH = new URL('../docs/report-template.html', import.meta.url)
 
 // The only marks a report may draw. A path outside this file is a mark somebody
 // drew from memory, which is the failure mode this asset exists to prevent.
-export const MARKS_PATH = new URL('../docs/technology-marks.json', import.meta.url)
-
-let defaultTemplateHtml = null
-try {
-  defaultTemplateHtml = readFileSync(TEMPLATE_PATH, 'utf8')
-} catch {}
-
-let defaultMarks = null
-try {
-  defaultMarks = JSON.parse(readFileSync(MARKS_PATH, 'utf8'))
-} catch {}
+const MARKS_PATH = new URL('../docs/technology-marks.json', import.meta.url)
+const GEOMETRY_PATH = new URL('../docs/diagram-geometry.json', import.meta.url)
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -272,117 +263,23 @@ function checkPalette(reportHtml, templateHtml, errors = []) {
   }
 }
 
-// Layout numbers, stated in docs/diagram-geometry.md. GLYPH_ADVANCE_EM is the
-// average glyph advance of the template's font stack, which is what makes the
-// label budget match the text a browser actually draws.
-export const GLYPH_ADVANCE_EM = 0.54
-export const LABEL_INSET = 16
-export const CANVAS_PADDING = 20
-export const ARROW_TOLERANCE = 8
-export const FOOTPRINT_WIDTH = 132
-export const FOOTPRINT_HEIGHT = 100
-
-function attribute(el, name) {
-  const match = el.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))
-  return match ? match[1] : null
+function labelWidth(chars, fontSize, geometry) {
+  return chars * geometry.glyphAdvanceEm * fontSize
 }
 
-function numberAttribute(el, name) {
-  const raw = attribute(el, name)
-  if (raw === null) return NaN
-  const value = parseFloat(raw)
-  return Number.isFinite(value) ? value : NaN
-}
-
-function transformOf(el) {
-  const raw = attribute(el, 'transform')
-  if (!raw) return null
-  const move = raw.match(/translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/)
-  const zoom = raw.match(/scale\(\s*(-?[\d.]+)\s*\)/)
-  if (!move || !zoom) return null
-  return { x: parseFloat(move[1]), y: parseFloat(move[2]), scale: parseFloat(zoom[1]) }
-}
-
-const COLOUR_ATTRIBUTE = /\b(?:fill|stroke|color|style)\s*=/i
-
-function decodedText(raw) {
-  return raw.replace(/&(?:[a-z]+|#\d+|#[xX][0-9a-fA-F]+);/g, 'x')
-}
-
-// Read the size from the report's own CSS. A label whose size the report does
-// not state is a label the budget cannot be decided for, so it is skipped.
-function fontSizeFor(html, className) {
-  const rule = html.match(new RegExp(`\\.${className}\\s*\\{[^}]*font-size\\s*:\\s*([\\d.]+)px`))
-  return rule ? parseFloat(rule[1]) : null
-}
-
-function labelWidth(chars, fontSize) {
-  return chars * GLYPH_ADVANCE_EM * fontSize
-}
-
-function textExtent(text) {
+function textExtent(text, geometry) {
   const anchor = text.anchor || 'start'
   const x = text.x
-  const width = labelWidth(text.content.length, text.fontSize)
+  const width = labelWidth(text.content.length, text.fontSize, geometry)
   if (anchor === 'middle') return { x1: x - width / 2, x2: x + width / 2 }
   if (anchor === 'end') return { x1: x - width, x2: x }
   return { x1: x, x2: x + width }
 }
 
-function viewBoxOf(svg) {
-  const viewBox = attribute(svg, 'viewBox')
-  if (!viewBox) return null
-  const parts = viewBox.trim().split(/[\s,]+/).map(Number)
-  if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return null
-  const [minX, minY, width, height] = parts
-  return { minX, minY, maxX: minX + width, maxY: minY + height, width, height }
-}
-
-function segmentsOf(d) {
-  const tokens = d.match(/[MLHVZmlhvz][^MLHVZmlhvz]*/g)
-  if (!tokens) return null
-  let cursorX = 0
-  let cursorY = 0
-  const segments = []
-  for (const token of tokens) {
-    const command = token[0]
-    if (command !== command.toUpperCase()) return null
-    if (command === 'Z') continue
-    const args = (token.slice(1).match(/-?\d*\.?\d+/g) || []).map(Number)
-    if (args.length === 0) return null
-    let x = cursorX
-    let y = cursorY
-    if (command === 'M' || command === 'L') {
-      ;[x, y] = args
-    } else if (command === 'H') {
-      x = args[0]
-    } else {
-      y = args[0]
-    }
-    // A moveto opens a subpath; it is not a drawn segment, so it cannot attach to
-    // or cross anything.
-    if (command !== 'M') {
-      segments.push({ x1: cursorX, y1: cursorY, x2: x, y2: y, axis: command })
-    }
-    cursorX = x
-    cursorY = y
-  }
-  return segments
-}
-
-function boxOf(rect) {
-  return {
-    x: numberAttribute(rect, 'x'),
-    y: numberAttribute(rect, 'y'),
-    width: numberAttribute(rect, 'width'),
-    height: numberAttribute(rect, 'height'),
-  }
-}
-
-function onBoundary(box, x, y) {
-  const within = (value, low, high) => value >= low - ARROW_TOLERANCE && value <= high + ARROW_TOLERANCE
-  const verticalSide = Math.abs(x - box.x) <= ARROW_TOLERANCE || Math.abs(x - (box.x + box.width)) <= ARROW_TOLERANCE
-  const horizontalSide = Math.abs(y - box.y) <= ARROW_TOLERANCE || Math.abs(y - (box.y + box.height)) <= ARROW_TOLERANCE
+function onBoundary(box, x, y, geometry) {
+  const within = (value, low, high) => value >= low - geometry.arrowTolerance && value <= high + geometry.arrowTolerance
+  const verticalSide = Math.abs(x - box.x) <= geometry.arrowTolerance || Math.abs(x - (box.x + box.width)) <= geometry.arrowTolerance
+  const horizontalSide = Math.abs(y - box.y) <= geometry.arrowTolerance || Math.abs(y - (box.y + box.height)) <= geometry.arrowTolerance
   if (verticalSide && within(y, box.y, box.y + box.height)) return true
   if (horizontalSide && within(x, box.x, box.x + box.width)) return true
   return false
@@ -410,86 +307,7 @@ function crossesBox(x1, y1, x2, y2, box) {
   return left < boxRight && right > boxLeft && top < boxBottom && bottom > boxTop
 }
 
-export function parseDiagram(svg, html) {
-  const viewBox = viewBoxOf(svg)
-  const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
-  const nodes = []
-  const nodeBlocks = svg.match(/<a\b[\s\S]*?<\/a>/g) || []
-  for (const block of nodeBlocks) {
-    const rect = block.match(/<rect\b[^>]*class="[^"]*\btile\b[^"]*"[^>]*>/)
-    if (!rect) continue
-    // A node is a tile plus the label centred under it; the footprint, not the
-    // tile, is what edges attach to and what must not overlap.
-    const tile = boxOf(rect[0])
-    const centre = tile.x + tile.width / 2
-    const box = {
-      x: centre - FOOTPRINT_WIDTH / 2,
-      y: tile.y,
-      width: FOOTPRINT_WIDTH,
-      height: FOOTPRINT_HEIGHT,
-      tile,
-    }
-    box.labels = []
-    for (const match of block.matchAll(/<text\b[^>]*class="[^"]*\bnode-(title|subtitle)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
-      const kind = `node-${match[1]}`
-      const fontSize = fontSizeFor(html, kind)
-      if (fontSize === null) continue
-      box.labels.push({ kind: match[1], chars: decodedText(match[2]).length, fontSize })
-    }
-
-    const logoMatch = block.match(/<g\b[^>]*class="[^"]*\btile-logo\b[^"]*"[\s\S]*?<\/g>/)
-    const kindCode = /class="[^"]*\btile-mark\b/.test(block)
-    let logo = null
-    if (logoMatch) {
-      const groupMatch = logoMatch[0].match(/^<g\b[^>]*>/)
-      const group = groupMatch ? groupMatch[0] : ''
-      const pathMatch = logoMatch[0].match(/<path\b[^>]*\bd\s*=\s*"([^"]*)"/)
-      logo = {
-        raw: logoMatch[0],
-        group,
-        slug: attribute(group, 'data-tech'),
-        hasColour: COLOUR_ATTRIBUTE.test(logoMatch[0]),
-        path: pathMatch ? pathMatch[1] : null,
-        placed: transformOf(group),
-      }
-    }
-    box.logo = logo
-    box.kindCode = kindCode
-
-    nodes.push(box)
-  }
-
-  const edges = []
-  for (const match of svg.matchAll(/<path\b[^>]*class="[^"]*\bedge-[^"]*"[^>]*/g)) {
-    const d = attribute(match[0], 'd')
-    if (!d) continue
-    edges.push({ d, segments: segmentsOf(d) })
-  }
-
-  const labels = []
-  for (const match of svg.matchAll(/<text\b[^>]*class="[^"]*\b(edge-label|boundary-label)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
-    const kind = match[1]
-    const fontSize = fontSizeFor(html, kind)
-    if (fontSize === null) continue
-    labels.push({
-      content: decodedText(match[2]),
-      fontSize,
-      x: numberAttribute(match[0], 'x'),
-      y: numberAttribute(match[0], 'y'),
-      anchor: attribute(match[0], 'text-anchor') || 'start',
-      kind,
-    })
-  }
-
-  return { viewBox, name: title ? title[1].trim() : 'diagram', nodes, edges, labels, raw: svg }
-}
-
-export function parseDiagrams(html) {
-  const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
-  return diagrams.map(svg => parseDiagram(svg, html))
-}
-
-function checkLayout(diagrams, html, errors = []) {
+function checkLayout(diagrams, geometry, errors = []) {
   if (diagrams.length === 0) return
 
   for (const diagram of diagrams) {
@@ -506,20 +324,20 @@ function checkLayout(diagrams, html, errors = []) {
     }
 
     const fits = (x1, x2, y1, y2, what) => {
-      if (x1 < viewBox.minX + CANVAS_PADDING || x2 > viewBox.maxX - CANVAS_PADDING
-        || y1 < viewBox.minY + CANVAS_PADDING || y2 > viewBox.maxY - CANVAS_PADDING) {
-        errors.push(`${name}: ${what} runs past the viewBox padding; every element needs ${CANVAS_PADDING}px of margin inside 0 0 ${viewBox.width} ${viewBox.height}`)
+      if (x1 < viewBox.minX + geometry.canvasPadding || x2 > viewBox.maxX - geometry.canvasPadding
+        || y1 < viewBox.minY + geometry.canvasPadding || y2 > viewBox.maxY - geometry.canvasPadding) {
+        errors.push(`${name}: ${what} runs past the viewBox padding; every element needs ${geometry.canvasPadding}px of margin inside 0 0 ${viewBox.width} ${viewBox.height}`)
       }
     }
 
     for (const node of nodes) {
       fits(node.x, node.x + node.width, node.y, node.y + node.height, `node at x=${node.x} y=${node.y}`)
       for (const label of node.labels) {
-        const budget = Math.floor((node.width - LABEL_INSET) / (GLYPH_ADVANCE_EM * label.fontSize))
+        const budget = Math.floor((node.width - geometry.labelInset) / (geometry.glyphAdvanceEm * label.fontSize))
         if (label.chars > budget) {
           errors.push(`${name}: node at x=${node.x} gives ${label.kind} ${budget} characters at ${label.fontSize}px but holds ${label.chars}; shorten the label or move the detail to the evidence panel`)
         }
-        const width = labelWidth(label.chars, label.fontSize)
+        const width = labelWidth(label.chars, label.fontSize, geometry)
         const centre = node.x + node.width / 2
         fits(centre - width / 2, centre + width / 2, node.y, node.y + node.height, `${label.kind} text`)
       }
@@ -537,7 +355,7 @@ function checkLayout(diagrams, html, errors = []) {
     }
 
     for (const label of labels) {
-      const { x1, x2 } = textExtent(label)
+      const { x1, x2 } = textExtent(label, geometry)
       fits(x1, x2, label.y - label.fontSize, label.y, `${label.kind} "${label.content}"`)
       for (const node of nodes) {
         const clearsVertically = label.y <= node.y || label.y - label.fontSize >= node.y + node.height
@@ -554,15 +372,15 @@ function checkLayout(diagrams, html, errors = []) {
       if (!edge.segments || edge.segments.length === 0) continue
       const start = edge.segments[0]
       const finish = edge.segments[edge.segments.length - 1]
-      const hasSource = nodes.some(node => onBoundary(node, start.x1, start.y1))
-      const hasTarget = nodes.some(node => onBoundary(node, finish.x2, finish.y2))
+      const hasSource = nodes.some(node => onBoundary(node, start.x1, start.y1, geometry))
+      const hasTarget = nodes.some(node => onBoundary(node, finish.x2, finish.y2, geometry))
       if (!hasSource || !hasTarget) {
         const missing = [!hasSource && 'source', !hasTarget && 'target'].filter(Boolean).join(' and ')
         errors.push(`${name}: edge "${edge.d}" is not attached to a node boundary at the ${missing}`)
       }
 
       for (const segment of edge.segments) {
-        const shrink = ARROW_TOLERANCE
+        const shrink = geometry.arrowTolerance
         const dx = segment.x2 - segment.x1
         const dy = segment.y2 - segment.y1
         const shorten = (axis) => {
@@ -771,36 +589,20 @@ export function verifyReport(bundle, options = {}) {
     const html = bundle['architecture.html']
     checkHtml(html, conceptIds, errors)
 
-    const diagrams = parseDiagrams(html)
-    checkLayout(diagrams, html, errors)
-
-    let marks = options.marks
-    if (marks === undefined) {
-      if (options.marksPath) {
-        try {
-          marks = JSON.parse(readFileSync(options.marksPath, 'utf8'))
-        } catch {
-          marks = null
-        }
-      } else {
-        marks = defaultMarks
-      }
+    const geometry = options.geometry
+    if (!geometry) {
+      errors.push('diagram geometry was not supplied; layout cannot be verified against docs/diagram-geometry.json')
     }
+    const diagrams = parseDiagrams(html, geometry || {})
+    if (geometry) checkLayout(diagrams, geometry, errors)
+
+    const marks = options.marks ?? null
     checkMarks(diagrams, errors, marks, index ? detectTechnologies(index, marks) : null)
 
-    let templateHtml = options.templateHtml
-    if (templateHtml === undefined) {
-      if (options.templatePath) {
-        try {
-          templateHtml = readFileSync(options.templatePath, 'utf8')
-        } catch {
-          templateHtml = null
-        }
-      } else {
-        templateHtml = defaultTemplateHtml
-      }
-    }
-    if (templateHtml) {
+    const templateHtml = options.templateHtml
+    if (!templateHtml) {
+      errors.push('report template was not supplied; palette cannot be verified against docs/report-template.html')
+    } else {
       checkPalette(html, templateHtml, errors)
     }
   }
@@ -813,7 +615,6 @@ export function verifyReport(bundle, options = {}) {
     errors,
   }
 }
-
 export async function checkReport(target, options = {}) {
   const dir = resolve(target)
   let info
@@ -835,29 +636,27 @@ export async function checkReport(target, options = {}) {
     }
   }
 
-  let marks = options.marks
-  if (marks === undefined && options.marksPath) {
+  const loadText = async (supplied, path) => {
+    if (supplied !== undefined) return supplied
     try {
-      marks = JSON.parse(await readFile(options.marksPath, 'utf8'))
+      return await readFile(path, 'utf8')
     } catch {
-      marks = null
+      return null
     }
   }
-
-  let templateHtml = options.templateHtml
-  if (templateHtml === undefined && options.templatePath) {
+  const loadJson = async (supplied, path) => {
+    if (supplied !== undefined) return supplied
     try {
-      templateHtml = await readFile(options.templatePath, 'utf8')
+      return JSON.parse(await readFile(path, 'utf8'))
     } catch {
-      templateHtml = null
+      return null
     }
   }
+  const templateHtml = await loadText(options.templateHtml, options.templatePath || TEMPLATE_PATH)
+  const marks = await loadJson(options.marks, options.marksPath || MARKS_PATH)
+  const geometry = await loadJson(options.geometry, options.geometryPath || GEOMETRY_PATH)
 
-  const result = verifyReport(bundle, {
-    ...options,
-    ...(marks !== undefined ? { marks } : {}),
-    ...(templateHtml !== undefined ? { templateHtml } : {}),
-  })
+  const result = verifyReport(bundle, { templateHtml, marks, geometry })
 
   return {
     ok: result.ok,
@@ -865,8 +664,7 @@ export async function checkReport(target, options = {}) {
     errors: result.errors,
   }
 }
-
-export async function cli(args = process.argv.slice(2)) {
+async function cli(args = process.argv.slice(2)) {
   const target = args[0]
   if (!target) {
     console.error('usage: node scripts/check-report.mjs <report-dir>')

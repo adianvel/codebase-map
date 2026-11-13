@@ -106,7 +106,8 @@ Copy the skill bundle into the skills directory supported by your agent:
 │   └── technology-marks.json
 └── scripts/
     ├── check-report.mjs
-    └── diagram-model.mjs
+    ├── diagram-model.mjs
+    └── report-verifier.mjs
 ```
 
 The user must invoke it by name using the convention supported by the agent:
@@ -190,7 +191,8 @@ silently preserving them.
 │   └── technology-marks.json
 ├── scripts/
 │   ├── check-report.mjs
-    └── diagram-model.mjs
+│   ├── diagram-model.mjs
+│   └── report-verifier.mjs
 ├── .github/
 │   └── workflows/
 │       └── check.yml

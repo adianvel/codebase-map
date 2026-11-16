@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { verifyReport, checkReport } from '../scripts/check-report.mjs'
+import { verifyReport } from '../scripts/report-verifier.mjs'
+import { checkReport } from '../scripts/check-report.mjs'
 import { parseDiagrams } from '../scripts/diagram-model.mjs'
 
 const REQUIRED_FILES = ['index.json', 'context.md', 'architecture.html', 'evidence.md']
@@ -612,6 +613,14 @@ test('technology marks asset: every mark is vendored and complete', async () => 
     assert.ok(mark.keywords.length > 0 && mark.keywords.every(k => k.length > 2))
     assert.match(mark.path, /^M-?[\d.]/)
     assert.doesNotMatch(mark.path, /\s\s/, `${mark.slug} path is not normalised`)
+  }
+})
+
+test('diagram geometry asset: every number the layout check decides against is present', async () => {
+  const geometry = JSON.parse(await readFile(new URL('../docs/diagram-geometry.json', import.meta.url), 'utf8'))
+  assert.deepEqual(Object.keys(geometry).sort(), ['arrowTolerance', 'canvasPadding', 'footprintHeight', 'footprintWidth', 'glyphAdvanceEm', 'labelInset'])
+  for (const value of Object.values(geometry)) {
+    assert.ok(Number.isFinite(value) && value > 0)
   }
 })
 

@@ -1,0 +1,19 @@
+[package]
+name = "codebase-map"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Report check for the codebase-map agent skill"
+publish = false
+
+[[bin]]
+name = "check-report"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+lto = true
+strip = true

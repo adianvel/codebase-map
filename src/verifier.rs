@@ -700,11 +700,8 @@ fn index_text(index: &Value) -> String {
 fn names_token(text: &str, token: &str) -> bool {
     let (text, token) = (text.as_bytes(), token.as_bytes());
     let word = |b: Option<&u8>| b.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    if token.is_empty() {
-        // "".indexOf("") is 0, so an empty keyword matches unless text starts with a word char.
-        return !word(text.first());
-    }
-    (0..text.len())
+    // `..=` so an empty keyword can match at the very end (Node looped forever on one).
+    (0..=text.len())
         .filter(|&at| text[at..].starts_with(token))
         .any(|at| {
             let before = if at == 0 { None } else { text.get(at - 1) };
@@ -758,6 +755,11 @@ fn check_marks(
                 .map(|m| (js::string(m.get("slug")), m))
                 .collect()
         });
+    let box_size = marks
+        .and_then(|m| m.get("box"))
+        .filter(|b| truthy(b))
+        .and_then(Value::as_f64)
+        .unwrap_or(24.0);
     let n = js::num;
 
     for diagram in diagrams {
@@ -812,11 +814,6 @@ fn check_marks(
                 errors.push(format!("{name}: the \"{slug}\" mark is not backed by index.json; name the technology in the evidence or use the kind code"));
             }
 
-            let box_size = marks
-                .and_then(|m| m.get("box"))
-                .filter(|b| truthy(b))
-                .and_then(Value::as_f64)
-                .unwrap_or(24.0);
             match logo.placed {
                 None => errors.push(format!(
                     "{name}: the \"{slug}\" mark needs a transform that places its {b}x{b} path inside the tile; docs/diagram-geometry.md gives translate and scale",

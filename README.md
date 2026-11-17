@@ -141,6 +141,7 @@ cargo build --release
 target/release/check-report <report-dir>
 ```
 
+For a fully static Linux binary, add `--target x86_64-unknown-linux-musl`.
 Or install it on your `PATH` with `cargo install --path .` and run
 `check-report <report-dir>` from anywhere. Rebuild after editing anything in
 `docs/`, since the binary carries the contract it was built from.

@@ -93,14 +93,31 @@ It behaves exactly like `node scripts/check-report.mjs <report-dir>`.
 
 ## Tickets (tracer bullets)
 
-- [ ] 1. Crate skeleton and CLI: usage, missing directory, missing files,
+- [x] 1. Crate skeleton and CLI: usage, missing directory, missing files,
   pass on the example report. (no blockers)
-- [ ] 2. `index.json` schema and reference checks. (blocked by 1)
-- [ ] 3. `architecture.html` concept markers, search control, download
+- [x] 2. `index.json` schema and reference checks. (blocked by 1)
+- [x] 3. `architecture.html` concept markers, search control, download
   control, palette. (blocked by 1)
-- [ ] 4. Diagram Model and layout checks. (blocked by 1)
-- [ ] 5. Technology mark checks, secrets, context budget. (blocked by 2, 4)
-- [ ] 6. Golden parity corpus replay and differential run vs Node.
+- [x] 4. Diagram Model and layout checks. (blocked by 1)
+- [x] 5. Technology mark checks, secrets, context budget. (blocked by 2, 4)
+- [x] 6. Golden parity corpus replay and differential run vs Node.
   (blocked by 2-5)
-- [ ] 7. Switch SKILL.md, README, CI to the binary; delete the Node scripts.
+- [x] 7. Switch SKILL.md, README, CI to the binary; delete the Node scripts.
   (blocked by 6)
+
+## Verification record
+
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`: clean.
+- `cargo test`: 28 tests (unit: JavaScript formatting and the Diagram Model;
+  integration: CLI, verifier behaviour, and the 53-case Node replay).
+- Differential run, Node `scripts/check-report.mjs` at 4561b09 against the
+  release binary, comparing exit code, stdout and stderr: the example report,
+  the 35 recorded bundles that used the default contract, and 25,000 seeded
+  mutations of them (five seeds of 5,000). No difference in any report Node
+  could check. The only differences:
+  - 363 reports where an `index.json` entry was `null` or not an object: Node
+    crashed with a `TypeError`; Rust reports the entry's missing fields.
+  - 1 report with a 2.7 GB `context.md`: Node could not read a string that
+    large and called the file missing; Rust reads it and reports the budget.
+  - By design: the usage line names `check-report`, and an invalid
+    `index.json` names serde's syntax error instead of V8's.

@@ -204,12 +204,17 @@ full scan is the fallback when no prior index or usable revision exists.
 
 ## Completion check
 
-The mechanical half of this check lives in one module. Run it when a JavaScript
-runtime is available, and fix what it reports before finishing:
+The mechanical half of this check is one Rust binary, `check-report`, built from
+this skill's directory. Run it when a Rust toolchain or a built binary is
+available, and fix what it reports before finishing:
 
 ```text
-node scripts/check-report.mjs <report-dir>
+cargo build --release --manifest-path <skill-dir>/Cargo.toml
+<skill-dir>/target/release/check-report <report-dir>
 ```
+
+It exits 0 when the report passes, 1 with a list of problems, and 2 when the
+directory is missing.
 
 It verifies that the report files exist, that `index.json` is valid and carries
 `schemaVersion`, that every material entry has evidence and confidence, that

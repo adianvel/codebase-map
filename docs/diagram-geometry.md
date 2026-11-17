@@ -2,9 +2,9 @@
 
 The coordinate rules for a report's SVG views. The template
 (`docs/report-template.html`) owns the palette and the required regions; this
-file owns only the numbers that place nodes, edges, and labels inside them. The numbers themselves live mechanically in `docs/diagram-geometry.json` — the FileSystem Adapter loads that file and the Report Verifier decides only what a coordinate can decide against it, so the prose here and the checks cannot silently diverge.
+file owns only the numbers that place nodes, edges, and labels inside them. The numbers themselves live mechanically in `docs/diagram-geometry.json` — the report check embeds that file when it is built and the Report Verifier decides only what a coordinate can decide against it, so the prose here and the checks cannot silently diverge.
 
-`scripts/check-report.mjs` enforces what a coordinate can decide — content
+The `check-report` binary enforces what a coordinate can decide — content
 inside the viewBox, labels inside their node's footprint, nodes that do not
 overlap, and edges attached to footprints. The rest is taste and stays in the
 prose.

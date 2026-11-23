@@ -46,6 +46,12 @@ function fontSizeFor(html, className) {
   return rule ? parseFloat(rule[1]) : null
 }
 
+const FONT_SIZE_CLASSES = ['node-title', 'node-subtitle', 'edge-label', 'boundary-label']
+
+function fontSizesFor(html) {
+  return new Map(FONT_SIZE_CLASSES.map(className => [className, fontSizeFor(html, className)]))
+}
+
 function viewBoxOf(svg) {
   const viewBox = attribute(svg, 'viewBox')
   if (!viewBox) return null
@@ -96,7 +102,7 @@ function boxOf(rect) {
   }
 }
 
-function parseDiagram(svg, html, footprint = {}) {
+function parseDiagram(svg, fontSizes, footprint = {}) {
   const viewBox = viewBoxOf(svg)
   const title = svg.match(/<title[^>]*>([\s\S]*?)<\/title>/)
   const nodes = []
@@ -120,7 +126,7 @@ function parseDiagram(svg, html, footprint = {}) {
     box.labels = []
     for (const match of block.matchAll(/<text\b[^>]*class="[^"]*\bnode-(title|subtitle)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
       const kind = `node-${match[1]}`
-      const fontSize = fontSizeFor(html, kind)
+      const fontSize = fontSizes.get(kind)
       if (fontSize === null) continue
       box.labels.push({ kind: match[1], chars: decodedText(match[2]).length, fontSize })
     }
@@ -157,7 +163,7 @@ function parseDiagram(svg, html, footprint = {}) {
   const labels = []
   for (const match of svg.matchAll(/<text\b[^>]*class="[^"]*\b(edge-label|boundary-label)\b[^"]*"[^>]*>([^<]*)<\/text>/g)) {
     const kind = match[1]
-    const fontSize = fontSizeFor(html, kind)
+    const fontSize = fontSizes.get(kind)
     if (fontSize === null) continue
     labels.push({
       content: decodedText(match[2]),
@@ -174,5 +180,6 @@ function parseDiagram(svg, html, footprint = {}) {
 
 export function parseDiagrams(html, footprint = {}) {
   const diagrams = html.match(/<svg\b(?![^>]*class="[^"]*icon)[^>]*>[\s\S]*?<\/svg>/g) || []
-  return diagrams.map(svg => parseDiagram(svg, html, footprint))
+  const fontSizes = fontSizesFor(html)
+  return diagrams.map(svg => parseDiagram(svg, fontSizes, footprint))
 }

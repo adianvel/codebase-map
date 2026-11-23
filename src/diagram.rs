@@ -152,11 +152,13 @@ fn decoded_text(raw: &str) -> String {
 /// Read the size from the report's own CSS. A label whose size the report does
 /// not state is a label the budget cannot be decided for, so it is skipped.
 fn font_size_for(html: &str, class_name: &str) -> Option<f64> {
-    let pattern = format!(
-        r"\.{}\s*\{{[^}}]*font-size\s*:\s*([0-9.]+)px",
-        regex::escape(class_name)
-    );
-    let re = Regex::new(&pattern).expect("valid regex");
+    let re = match class_name {
+        "node-title" => regex!(r"\.node-title\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
+        "node-subtitle" => regex!(r"\.node-subtitle\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
+        "edge-label" => regex!(r"\.edge-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
+        "boundary-label" => regex!(r"\.boundary-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
+        _ => return None,
+    };
     re.captures(html).map(|c| js::parse_float(&c[1]))
 }
 

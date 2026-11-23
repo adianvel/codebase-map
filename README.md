@@ -104,10 +104,14 @@ Copy the skill bundle into the skills directory supported by your agent:
 │   ├── index-schema.md
 │   ├── report-template.html
 │   └── technology-marks.json
-└── scripts/
-    ├── check-report.mjs
-    ├── diagram-model.mjs
-    └── report-verifier.mjs
+├── Cargo.toml
+├── Cargo.lock
+└── src/
+    ├── main.rs
+    ├── lib.rs
+    ├── verifier.rs
+    ├── diagram.rs
+    └── js.rs
 ```
 
 The user must invoke it by name using the convention supported by the agent:
@@ -126,9 +130,21 @@ The skill is designed to work across Codex, Claude Code, and other agents that
 support reusable repository skills. It does not require an MCP server, hosted
 database, image-generation service, or parser package.
 
-The report check ships as a zero-dependency Node script. CI runs it over the
-example report, and the agent runs it before finishing when a JavaScript runtime
-is available; mapping a repository does not require one.
+The report check ships as a small Rust binary, `check-report`, with the Report
+Contract assets in `docs/` compiled into it. CI builds, lints, and tests it and
+runs it over the example report, and the agent runs it before finishing when a
+Rust toolchain or a built binary is available; mapping a repository does not
+require one. Build and run it from the skill directory:
+
+```text
+cargo build --release
+target/release/check-report <report-dir>
+```
+
+For a fully static Linux binary, add `--target x86_64-unknown-linux-musl`.
+Or install it on your `PATH` with `cargo install --path .` and run
+`check-report <report-dir>` from anywhere. Rebuild after editing anything in
+`docs/`, since the binary carries the contract it was built from.
 
 ## Usage
 
@@ -188,11 +204,21 @@ silently preserving them.
 │   ├── diagram-geometry.json
 │   ├── index-schema.md
 │   ├── report-template.html
+│   ├── rust-rewrite-spec.md
 │   └── technology-marks.json
-├── scripts/
-│   ├── check-report.mjs
-│   ├── diagram-model.mjs
-│   └── report-verifier.mjs
+├── Cargo.toml
+├── Cargo.lock
+├── src/
+│   ├── main.rs          # check-report: the FileSystem Adapter
+│   ├── lib.rs
+│   ├── verifier.rs      # Report Verifier
+│   ├── diagram.rs       # Diagram Model
+│   └── js.rs            # JavaScript number and string formatting kept from the Node check
+├── tests/
+│   ├── cli.rs
+│   ├── verifier.rs
+│   ├── parity.rs
+│   └── fixtures/node-verifier-cases.jsonl
 ├── .github/
 │   └── workflows/
 │       └── check.yml
@@ -223,8 +249,8 @@ the search threshold, plain-text evidence, the no-download rule, and when to add
 a parser helper — are stated once in `SKILL.md`, which owns the contract. The
 report's shape and palette live in `docs/report-template.html`, the coordinates
 in `docs/diagram-geometry.json` (explained in `docs/diagram-geometry.md`), the technology a tile may show in
-`docs/technology-marks.json`, and `scripts/check-report.mjs` enforces the
-mechanical parts. CI runs that module over the example report on every push and
+`docs/technology-marks.json`, and the `check-report` binary enforces the
+mechanical parts. CI runs it over the example report on every push and
 pull request.
 
 ## License

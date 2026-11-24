@@ -114,12 +114,27 @@ pub(crate) fn js_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
+/// `(?-u:\b){name}\s*=\s*"([^"]*)"`, compiled once per attribute name.
 fn attribute(el: &str, name: &str) -> Option<String> {
-    let re = Regex::new(&format!(
-        r#"(?-u:\b){}\s*=\s*"([^"]*)""#,
-        regex::escape(name)
-    ))
-    .ok()?;
+    let re = match name {
+        "x" => regex!(r#"(?-u:\b)x\s*=\s*"([^"]*)""#),
+        "y" => regex!(r#"(?-u:\b)y\s*=\s*"([^"]*)""#),
+        "width" => regex!(r#"(?-u:\b)width\s*=\s*"([^"]*)""#),
+        "height" => regex!(r#"(?-u:\b)height\s*=\s*"([^"]*)""#),
+        "d" => regex!(r#"(?-u:\b)d\s*=\s*"([^"]*)""#),
+        "transform" => regex!(r#"(?-u:\b)transform\s*=\s*"([^"]*)""#),
+        "viewBox" => regex!(r#"(?-u:\b)viewBox\s*=\s*"([^"]*)""#),
+        "data-tech" => regex!(r#"(?-u:\b)data-tech\s*=\s*"([^"]*)""#),
+        "text-anchor" => regex!(r#"(?-u:\b)text-anchor\s*=\s*"([^"]*)""#),
+        other => {
+            let re = Regex::new(&format!(
+                r#"(?-u:\b){}\s*=\s*"([^"]*)""#,
+                regex::escape(other)
+            ))
+            .ok()?;
+            return re.captures(el).map(|c| c[1].to_string());
+        }
+    };
     re.captures(el).map(|c| c[1].to_string())
 }
 

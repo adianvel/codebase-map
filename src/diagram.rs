@@ -164,17 +164,39 @@ fn decoded_text(raw: &str) -> String {
         .into_owned()
 }
 
-/// Read the size from the report's own CSS. A label whose size the report does
+/// Font sizes stated once in the report CSS. A label whose size the report does
 /// not state is a label the budget cannot be decided for, so it is skipped.
-fn font_size_for(html: &str, class_name: &str) -> Option<f64> {
-    let re = match class_name {
-        "node-title" => regex!(r"\.node-title\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
-        "node-subtitle" => regex!(r"\.node-subtitle\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
-        "edge-label" => regex!(r"\.edge-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
-        "boundary-label" => regex!(r"\.boundary-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"),
-        _ => return None,
-    };
-    re.captures(html).map(|c| js::parse_float(&c[1]))
+struct StatedFontSizes {
+    node_title: Option<f64>,
+    node_subtitle: Option<f64>,
+    edge_label: Option<f64>,
+    boundary_label: Option<f64>,
+}
+
+impl StatedFontSizes {
+    fn read(html: &str) -> Self {
+        let px = |re: &regex::Regex| re.captures(html).map(|c| js::parse_float(&c[1]));
+        Self {
+            node_title: px(regex!(r"\.node-title\s*\{[^}]*font-size\s*:\s*([0-9.]+)px")),
+            node_subtitle: px(regex!(
+                r"\.node-subtitle\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"
+            )),
+            edge_label: px(regex!(r"\.edge-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px")),
+            boundary_label: px(regex!(
+                r"\.boundary-label\s*\{[^}]*font-size\s*:\s*([0-9.]+)px"
+            )),
+        }
+    }
+
+    fn for_class(&self, class_name: &str) -> Option<f64> {
+        match class_name {
+            "node-title" => self.node_title,
+            "node-subtitle" => self.node_subtitle,
+            "edge-label" => self.edge_label,
+            "boundary-label" => self.boundary_label,
+            _ => None,
+        }
+    }
 }
 
 fn view_box_of(svg: &str) -> Option<ViewBox> {
@@ -262,7 +284,7 @@ fn dimension(geometry: &Value, key: &str, fallback: f64) -> f64 {
     }
 }
 
-fn parse_diagram(svg: &str, html: &str, geometry: &Value) -> Diagram {
+fn parse_diagram(svg: &str, fonts: &StatedFontSizes, geometry: &Value) -> Diagram {
     let view_box = view_box_of(svg);
     let title = regex!(r"<title[^>]*>([\s\S]*?)</title>").captures(svg);
     let mut nodes = Vec::new();
@@ -291,7 +313,12 @@ fn parse_diagram(svg: &str, html: &str, geometry: &Value) -> Diagram {
             r#"<text(?-u:\b)[^>]*class="[^"]*(?-u:\b)node-(title|subtitle)(?-u:\b)[^"]*"[^>]*>([^<]*)</text>"#
         );
         for caps in label_re.captures_iter(block) {
-            let Some(font_size) = font_size_for(html, &format!("node-{}", &caps[1])) else {
+            let class_name = match &caps[1] {
+                "title" => "node-title",
+                "subtitle" => "node-subtitle",
+                _ => continue,
+            };
+            let Some(font_size) = fonts.for_class(class_name) else {
                 continue;
             };
             labels.push(NodeLabel {
@@ -344,10 +371,10 @@ fn parse_diagram(svg: &str, html: &str, geometry: &Value) -> Diagram {
         r#"<text(?-u:\b)[^>]*class="[^"]*(?-u:\b)(edge-label|boundary-label)(?-u:\b)[^"]*"[^>]*>([^<]*)</text>"#
     );
     for caps in text_re.captures_iter(svg) {
-        let kind = caps[1].to_string();
-        let Some(font_size) = font_size_for(html, &kind) else {
+        let Some(font_size) = fonts.for_class(&caps[1]) else {
             continue;
         };
+        let kind = caps[1].to_string();
         let tag = &caps[0];
         let content = decoded_text(&caps[2]);
         labels.push(Label {
@@ -376,9 +403,10 @@ fn parse_diagram(svg: &str, html: &str, geometry: &Value) -> Diagram {
 
 /// Every `<svg>` in the report except icon sprites, in document order.
 pub fn parse_diagrams(html: &str, geometry: &Value) -> Vec<Diagram> {
+    let fonts = StatedFontSizes::read(html);
     svg_blocks(html)
         .into_iter()
-        .map(|svg| parse_diagram(svg, html, geometry))
+        .map(|svg| parse_diagram(svg, &fonts, geometry))
         .collect()
 }
 

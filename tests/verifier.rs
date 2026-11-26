@@ -112,6 +112,69 @@ fn secret_shaped_literals_are_flagged() {
 }
 
 #[test]
+fn a_glued_technology_word_does_not_back_the_mark() {
+    let index = example_index()
+        .to_string()
+        .replace("TypeScript", "TypeScriptextra")
+        .replace("tsconfig", "tsconfigextra");
+    let errors = errors_with("index.json", Value::String(index));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("the \"typescript\" mark is not backed by index.json")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_technology_keyword_at_the_end_of_a_summary_backs_the_mark() {
+    let mut index: Value = serde_json::from_str(
+        &example_index()
+            .to_string()
+            .replace("TypeScript", "PlainScript")
+            .replace("tsconfig", "buildfile"),
+    )
+    .unwrap();
+    let summary = index["files"][0]["summary"].as_str().unwrap();
+    index["files"][0]["summary"] = json!(format!("{summary} typescript"));
+    let errors = errors_with("index.json", Value::String(index.to_string()));
+    assert!(
+        errors
+            .iter()
+            .all(|e| !e.contains("not backed by index.json")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn the_first_stated_font_size_is_the_one_that_counts() {
+    let html = example()["architecture.html"].as_str().unwrap().replacen(
+        "</style>",
+        ".node-title { font-size: 99px; }</style>",
+        1,
+    );
+    let errors = errors_with("architecture.html", Value::String(html));
+    assert!(
+        errors.iter().all(|e| !e.contains("characters")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_label_without_a_stated_font_size_is_not_budgeted() {
+    let html = example()["architecture.html"].as_str().unwrap().replacen(
+        ".node-title {\n      fill: var(--text);\n      font-size: 13px;\n",
+        ".node-title {\n      fill: var(--text);\n",
+        1,
+    );
+    let errors = errors_with("architecture.html", Value::String(html));
+    assert!(
+        errors.iter().all(|e| !e.contains("characters")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn a_nudged_tile_breaks_the_layout_with_coordinates() {
     let html =
         example()["architecture.html"]

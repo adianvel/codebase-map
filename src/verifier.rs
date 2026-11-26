@@ -698,15 +698,30 @@ fn index_text(index: &Value) -> String {
 /// "react" backs React; "reactive" does not. Keywords that end in a separator
 /// (".github/workflows", "node.js") match on their own.
 fn names_token(text: &str, token: &str) -> bool {
-    let (text, token) = (text.as_bytes(), token.as_bytes());
+    let bytes = text.as_bytes();
+    let needle = token.as_bytes();
     let word = |b: Option<&u8>| b.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    // `..=` so an empty keyword can match at the very end (Node looped forever on one).
-    (0..=text.len())
-        .filter(|&at| text[at..].starts_with(token))
-        .any(|at| {
-            let before = if at == 0 { None } else { text.get(at - 1) };
-            !word(before) && !word(text.get(at + token.len()))
-        })
+    let boundary = |at: usize| {
+        let before = if at == 0 { None } else { bytes.get(at - 1) };
+        !word(before) && !word(bytes.get(at + needle.len()))
+    };
+    // An empty keyword matches at the end, same as the old byte walk.
+    // Node looped forever on one, so the end position has to count.
+    if needle.is_empty() {
+        return (0..=bytes.len()).any(boundary);
+    }
+    let mut from = 0;
+    while let Some(rel) = text[from..].find(token) {
+        let at = from + rel;
+        if boundary(at) {
+            return true;
+        }
+        from = at + 1;
+        while from < text.len() && !text.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    false
 }
 
 fn detect_technologies(index: &Value, marks: Option<&Value>) -> HashSet<String> {

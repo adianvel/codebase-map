@@ -10,6 +10,7 @@
 //! can only be a vendored one and only where the index names that technology.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display};
 
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -162,7 +163,35 @@ pub fn verify_report(bundle: &Value, contract: &Contract) -> Vec<String> {
     errors
 }
 
-fn require_string(value: Option<&Value>, at: &str, errors: &mut Vec<String>) -> bool {
+/// `head.field`, formatted only when an error is actually reported.
+struct Dot<T> {
+    head: T,
+    field: &'static str,
+}
+
+impl<T: Display> Display for Dot<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.head, self.field)
+    }
+}
+
+/// `head[i]`, formatted only when an error is actually reported.
+struct Idx<T> {
+    head: T,
+    i: usize,
+}
+
+impl<T: Display> Display for Idx<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}[{}]", self.head, self.i)
+    }
+}
+
+fn require_string(
+    value: Option<&Value>,
+    at: &(impl Display + ?Sized),
+    errors: &mut Vec<String>,
+) -> bool {
     match value {
         Some(Value::String(s)) if !is_blank(s) => true,
         _ => {
@@ -174,7 +203,7 @@ fn require_string(value: Option<&Value>, at: &str, errors: &mut Vec<String>) -> 
 
 fn require_array<'a>(
     value: Option<&'a Value>,
-    at: &str,
+    at: &(impl Display + ?Sized),
     errors: &mut Vec<String>,
 ) -> Option<&'a Vec<Value>> {
     let array = value.and_then(Value::as_array);
@@ -184,7 +213,12 @@ fn require_array<'a>(
     array
 }
 
-fn require_one_of(value: Option<&Value>, allowed: &[&str], at: &str, errors: &mut Vec<String>) {
+fn require_one_of(
+    value: Option<&Value>,
+    allowed: &[&str],
+    at: &(impl Display + ?Sized),
+    errors: &mut Vec<String>,
+) {
     if !value
         .and_then(Value::as_str)
         .is_some_and(|v| allowed.contains(&v))
@@ -197,22 +231,39 @@ fn require_one_of(value: Option<&Value>, allowed: &[&str], at: &str, errors: &mu
     }
 }
 
-fn require_evidence_and_confidence(entry: &Value, at: &str, errors: &mut Vec<String>) {
-    if let Some(evidence) = require_array(entry.get("evidence"), &format!("{at}.evidence"), errors)
-    {
+fn require_evidence_and_confidence(
+    entry: &Value,
+    at: &(impl Display + ?Sized),
+    errors: &mut Vec<String>,
+) {
+    let evidence_at = Dot {
+        head: at,
+        field: "evidence",
+    };
+    if let Some(evidence) = require_array(entry.get("evidence"), &evidence_at, errors) {
         if evidence.is_empty() {
             errors.push(format!(
-                "{at}.evidence is empty; every material entry needs a source"
+                "{evidence_at} is empty; every material entry needs a source"
             ));
         }
         for (i, item) in evidence.iter().enumerate() {
-            require_string(Some(item), &format!("{at}.evidence[{i}]"), errors);
+            require_string(
+                Some(item),
+                &Idx {
+                    head: &evidence_at,
+                    i,
+                },
+                errors,
+            );
         }
     }
     require_one_of(
         entry.get("confidence"),
         &CONFIDENCE,
-        &format!("{at}.confidence"),
+        &Dot {
+            head: at,
+            field: "confidence",
+        },
         errors,
     );
 }
@@ -220,11 +271,10 @@ fn require_evidence_and_confidence(entry: &Value, at: &str, errors: &mut Vec<Str
 /// Schema and reference checks; returns the concept ids for the HTML checks.
 // shortcut: a non-object entry (which crashed the Node check) reads as an
 // entry with no fields, so it reports errors instead of aborting.
-fn check_index(index: &Map<String, Value>, errors: &mut Vec<String>) -> HashSet<String> {
+fn check_index<'a>(index: &'a Map<String, Value>, errors: &mut Vec<String>) -> HashSet<&'a str> {
     let mut file_ids = HashSet::new();
     let mut concept_ids = HashSet::new();
     let field = |key: &str| index.get(key);
-    let id_of = |entry: &Value| entry.get("id").and_then(Value::as_str).map(str::to_string);
 
     if !field("schemaVersion").is_some_and(Value::is_number) {
         errors.push("index.json is missing a numeric schemaVersion".into());
@@ -239,48 +289,127 @@ fn check_index(index: &Map<String, Value>, errors: &mut Vec<String>) -> HashSet<
 
     if let Some(files) = require_array(field("files"), "index.json.files", errors) {
         for (i, file) in files.iter().enumerate() {
-            let at = format!("index.json.files[{i}]");
-            if require_string(file.get("id"), &format!("{at}.id"), errors) {
-                file_ids.insert(id_of(file).unwrap_or_default());
+            let at = Idx {
+                head: "index.json.files",
+                i,
+            };
+            if require_string(
+                file.get("id"),
+                &Dot {
+                    head: &at,
+                    field: "id",
+                },
+                errors,
+            ) {
+                if let Some(id) = file.get("id").and_then(Value::as_str) {
+                    file_ids.insert(id);
+                }
             }
-            require_string(file.get("path"), &format!("{at}.path"), errors);
-            require_string(file.get("summary"), &format!("{at}.summary"), errors);
-            require_one_of(file.get("kind"), &FILE_KIND, &format!("{at}.kind"), errors);
+            require_string(
+                file.get("path"),
+                &Dot {
+                    head: &at,
+                    field: "path",
+                },
+                errors,
+            );
+            require_string(
+                file.get("summary"),
+                &Dot {
+                    head: &at,
+                    field: "summary",
+                },
+                errors,
+            );
+            require_one_of(
+                file.get("kind"),
+                &FILE_KIND,
+                &Dot {
+                    head: &at,
+                    field: "kind",
+                },
+                errors,
+            );
             require_evidence_and_confidence(file, &at, errors);
-            require_array(file.get("symbols"), &format!("{at}.symbols"), errors);
+            require_array(
+                file.get("symbols"),
+                &Dot {
+                    head: &at,
+                    field: "symbols",
+                },
+                errors,
+            );
         }
     }
 
     let concepts = require_array(field("concepts"), "index.json.concepts", errors);
     for (i, concept) in concepts.into_iter().flatten().enumerate() {
-        let at = format!("index.json.concepts[{i}]");
-        if require_string(concept.get("id"), &format!("{at}.id"), errors) {
-            concept_ids.insert(id_of(concept).unwrap_or_default());
+        let at = Idx {
+            head: "index.json.concepts",
+            i,
+        };
+        if require_string(
+            concept.get("id"),
+            &Dot {
+                head: &at,
+                field: "id",
+            },
+            errors,
+        ) {
+            if let Some(id) = concept.get("id").and_then(Value::as_str) {
+                concept_ids.insert(id);
+            }
         }
-        require_string(concept.get("name"), &format!("{at}.name"), errors);
-        require_string(concept.get("summary"), &format!("{at}.summary"), errors);
+        require_string(
+            concept.get("name"),
+            &Dot {
+                head: &at,
+                field: "name",
+            },
+            errors,
+        );
+        require_string(
+            concept.get("summary"),
+            &Dot {
+                head: &at,
+                field: "summary",
+            },
+            errors,
+        );
         require_evidence_and_confidence(concept, &at, errors);
     }
 
     let relationships = require_array(field("relationships"), "index.json.relationships", errors);
     for (i, relationship) in relationships.into_iter().flatten().enumerate() {
-        let at = format!("index.json.relationships[{i}]");
+        let at = Idx {
+            head: "index.json.relationships",
+            i,
+        };
         require_string(
             relationship.get("summary"),
-            &format!("{at}.summary"),
+            &Dot {
+                head: &at,
+                field: "summary",
+            },
             errors,
         );
         require_one_of(
             relationship.get("kind"),
             &RELATIONSHIP_KIND,
-            &format!("{at}.kind"),
+            &Dot {
+                head: &at,
+                field: "kind",
+            },
             errors,
         );
         if let Some(cardinality) = relationship.as_object().and_then(|r| r.get("cardinality")) {
             require_one_of(
                 Some(cardinality),
                 &CARDINALITY,
-                &format!("{at}.cardinality"),
+                &Dot {
+                    head: &at,
+                    field: "cardinality",
+                },
                 errors,
             );
         }
@@ -289,10 +418,34 @@ fn check_index(index: &Map<String, Value>, errors: &mut Vec<String>) -> HashSet<
 
     let flows = require_array(field("flows"), "index.json.flows", errors);
     for (i, flow) in flows.into_iter().flatten().enumerate() {
-        let at = format!("index.json.flows[{i}]");
-        require_string(flow.get("id"), &format!("{at}.id"), errors);
-        require_string(flow.get("name"), &format!("{at}.name"), errors);
-        require_array(flow.get("steps"), &format!("{at}.steps"), errors);
+        let at = Idx {
+            head: "index.json.flows",
+            i,
+        };
+        require_string(
+            flow.get("id"),
+            &Dot {
+                head: &at,
+                field: "id",
+            },
+            errors,
+        );
+        require_string(
+            flow.get("name"),
+            &Dot {
+                head: &at,
+                field: "name",
+            },
+            errors,
+        );
+        require_array(
+            flow.get("steps"),
+            &Dot {
+                head: &at,
+                field: "steps",
+            },
+            errors,
+        );
         require_evidence_and_confidence(flow, &at, errors);
     }
 
@@ -301,7 +454,7 @@ fn check_index(index: &Map<String, Value>, errors: &mut Vec<String>) -> HashSet<
     }
 
     // Second pass: now that every id is known, check that each reference resolves.
-    let resolves = |value: Option<&Value>, ids: &HashSet<String>| {
+    let resolves = |value: Option<&Value>, ids: &HashSet<&str>| {
         value
             .and_then(Value::as_str)
             .is_some_and(|id| ids.contains(id))
@@ -353,13 +506,67 @@ fn check_index(index: &Map<String, Value>, errors: &mut Vec<String>) -> HashSet<
     concept_ids
 }
 
-fn check_html(html: &str, concept_ids: Option<&HashSet<String>>, errors: &mut Vec<String>) {
-    let mut markers: Vec<&str> = Vec::new();
-    for caps in regex!(r#"(?-u:\b)data-concept-id\s*=\s*"([^"]*)""#).captures_iter(html) {
-        let id = caps.get(1).map_or("", |m| m.as_str());
-        if !markers.contains(&id) {
-            markers.push(id);
+/// Markup outside `<!-- ... -->`. An unclosed comment is left intact, matching
+/// the old regex which only replaced a comment that had a close.
+fn comment_free_spans(html: &str) -> impl Iterator<Item = &str> {
+    let mut rest = html;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
         }
+        if let Some(at) = rest.find("<!--") {
+            let visible = &rest[..at];
+            if let Some(end) = rest[at + 4..].find("-->") {
+                rest = &rest[at + 4 + end + 3..];
+                return Some(visible);
+            }
+            let tail = rest;
+            rest = "";
+            return Some(tail);
+        }
+        let visible = rest;
+        rest = "";
+        Some(visible)
+    })
+}
+
+fn check_html(html: &str, concept_ids: Option<&HashSet<&str>>, errors: &mut Vec<String>) {
+    let mut markers: Vec<&str> = Vec::new();
+    let mut seen = HashSet::new();
+    let bytes = html.as_bytes();
+    let needle = "data-concept-id";
+    let mut from = 0;
+    while let Some(rel) = html[from..].find(needle) {
+        let i = from + rel;
+        let before = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        let mut j = i + needle.len();
+        if before {
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if bytes.get(j) == Some(&b'=') {
+                j += 1;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b'"') {
+                    let start = j + 1;
+                    let mut end = start;
+                    while end < bytes.len() && bytes[end] != b'"' {
+                        end += 1;
+                    }
+                    if end < bytes.len() {
+                        let id = &html[start..end];
+                        if seen.insert(id) {
+                            markers.push(id);
+                        }
+                        from = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        from = i + 1;
     }
 
     if markers.is_empty() {
@@ -391,10 +598,9 @@ fn check_html(html: &str, concept_ids: Option<&HashSet<String>>, errors: &mut Ve
 
     // A comment is not a control: the template's contract text names the very
     // things it forbids, so scan the markup the reader actually gets.
-    let markup = regex!(r"<!--[\s\S]*?-->").replace_all(html, " ");
     let download = regex!(r"(?i)\sdownload[\s/>=]");
     let archive = regex!(r#"(?i)href\s*=\s*"[^"]*\.(?:zip|tar|tgz|gz|rar|7z)""#);
-    if download.is_match(&markup) || archive.is_match(&markup) {
+    if comment_free_spans(html).any(|span| download.is_match(span) || archive.is_match(span)) {
         errors.push("architecture.html offers a source-code download control; the report must stay read-only".into());
     }
 }
@@ -470,6 +676,53 @@ impl Geometry {
     }
 }
 
+fn footprint_buckets(nodes: &[crate::diagram::Node]) -> HashMap<i32, Vec<usize>> {
+    let mut buckets: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        let f = node.footprint;
+        if !f.x.is_finite() || !f.width.is_finite() {
+            buckets.entry(i32::MIN).or_default().push(i);
+            continue;
+        }
+        let b0 = (f.x / 200.0).floor() as i32;
+        let b1 = ((f.x + f.width) / 200.0).floor() as i32;
+        let mut b = b0;
+        loop {
+            buckets.entry(b).or_default().push(i);
+            if b >= b1 || b > b0.saturating_add(64) {
+                break;
+            }
+            b += 1;
+        }
+    }
+    buckets
+}
+
+fn later_in_x(
+    buckets: &HashMap<i32, Vec<usize>>,
+    left: f64,
+    right: f64,
+    after: Option<usize>,
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    if let Some(ids) = buckets.get(&i32::MIN) {
+        out.extend(ids.iter().copied().filter(|&j| after.is_none_or(|i| j > i)));
+    }
+    let (left, right) = (left.min(right), left.max(right));
+    if left.is_finite() && right.is_finite() {
+        let b0 = (left / 200.0).floor() as i32;
+        let b1 = (right / 200.0).floor() as i32;
+        for b in b0.saturating_sub(1)..=b1.saturating_add(1) {
+            if let Some(ids) = buckets.get(&b) {
+                out.extend(ids.iter().copied().filter(|&j| after.is_none_or(|i| j > i)));
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 fn crosses_box(x1: f64, y1: f64, x2: f64, y2: f64, b: &Rect) -> bool {
     let (left, right, top, bottom) = (x1.min(x2), x1.max(x2), y1.min(y2), y1.max(y2));
     let (box_left, box_right, box_top, box_bottom) = (b.x, b.x + b.width, b.y, b.y + b.height);
@@ -504,14 +757,20 @@ fn check_layout(diagrams: &[Diagram], geometry: &Value, errors: &mut Vec<String>
         }
 
         let pad = g.canvas_padding;
-        let fits = |x1: f64, x2: f64, y1: f64, y2: f64, what: &str, errors: &mut Vec<String>| {
+        let fits = |x1: f64,
+                    x2: f64,
+                    y1: f64,
+                    y2: f64,
+                    what: &dyn Fn() -> String,
+                    errors: &mut Vec<String>| {
             if x1 < vb.min_x + pad
                 || x2 > vb.max_x - pad
                 || y1 < vb.min_y + pad
                 || y2 > vb.max_y - pad
             {
                 errors.push(format!(
-                    "{name}: {what} runs past the viewBox padding; every element needs {}px of margin inside 0 0 {} {}",
+                    "{name}: {} runs past the viewBox padding; every element needs {}px of margin inside 0 0 {} {}",
+                    what(),
                     n(pad),
                     n(vb.width),
                     n(vb.height)
@@ -526,7 +785,7 @@ fn check_layout(diagrams: &[Diagram], geometry: &Value, errors: &mut Vec<String>
                 f.x + f.width,
                 f.y,
                 f.y + f.height,
-                &format!("node at x={} y={}", n(f.x), n(f.y)),
+                &|| format!("node at x={} y={}", n(f.x), n(f.y)),
                 errors,
             );
             for label in &node.labels {
@@ -545,15 +804,17 @@ fn check_layout(diagrams: &[Diagram], geometry: &Value, errors: &mut Vec<String>
                     centre + width / 2.0,
                     f.y,
                     f.y + f.height,
-                    &format!("{} text", label.kind),
+                    &|| format!("{} text", label.kind),
                     errors,
                 );
             }
         }
 
-        for (i, a) in diagram.nodes.iter().enumerate() {
-            for b in &diagram.nodes[i + 1..] {
-                let (a, b) = (a.footprint, b.footprint);
+        let buckets = footprint_buckets(&diagram.nodes);
+        for (i, a_node) in diagram.nodes.iter().enumerate() {
+            let a = a_node.footprint;
+            for j in later_in_x(&buckets, a.x, a.x + a.width, Some(i)) {
+                let b = diagram.nodes[j].footprint;
                 if a.x < b.x + b.width
                     && b.x < a.x + a.width
                     && a.y < b.y + b.height
@@ -582,7 +843,7 @@ fn check_layout(diagrams: &[Diagram], geometry: &Value, errors: &mut Vec<String>
                 x2,
                 label.y - label.font_size,
                 label.y,
-                &format!("{} \"{}\"", label.kind, label.content),
+                &|| format!("{} \"{}\"", label.kind, label.content),
                 errors,
             );
             for node in &diagram.nodes {
@@ -665,8 +926,8 @@ fn check_layout(diagrams: &[Diagram], geometry: &Value, errors: &mut Vec<String>
                 let Some((x1, y1, x2, y2)) = inner else {
                     continue;
                 };
-                for node in &diagram.nodes {
-                    let f = node.footprint;
+                for j in later_in_x(&buckets, x1.min(x2), x1.max(x2), None) {
+                    let f = diagram.nodes[j].footprint;
                     if crosses_box(x1, y1, x2, y2, &f) {
                         errors.push(format!(
                             "{name}: edge \"{}\" runs through the node at x={} y={}; connect footprint boundaries, never across a node",

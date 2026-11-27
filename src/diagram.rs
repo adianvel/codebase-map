@@ -7,8 +7,28 @@
 //! markup. The footprint dimensions come from the supplied geometry
 //! (docs/diagram-geometry.json); without them a node falls back to its tile.
 
-use regex::Regex;
 use serde_json::Value;
+
+fn find_needle(hay: &str, needle: &str) -> Option<usize> {
+    let h = hay.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    let mut i = 0;
+    let last = h.len() - n.len();
+    while let Some(rel) = memchr::memchr(n[0], &h[i..=last]) {
+        let at = i + rel;
+        if &h[at..at + n.len()] == n {
+            return Some(at);
+        }
+        i = at + 1;
+        if i > last {
+            break;
+        }
+    }
+    None
+}
 
 use crate::js;
 
@@ -114,32 +134,93 @@ pub(crate) fn js_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// `(?-u:\b){name}\s*=\s*"([^"]*)"`, compiled once per attribute name.
-fn attribute(el: &str, name: &str) -> Option<String> {
-    let re = match name {
-        "x" => regex!(r#"(?-u:\b)x\s*=\s*"([^"]*)""#),
-        "y" => regex!(r#"(?-u:\b)y\s*=\s*"([^"]*)""#),
-        "width" => regex!(r#"(?-u:\b)width\s*=\s*"([^"]*)""#),
-        "height" => regex!(r#"(?-u:\b)height\s*=\s*"([^"]*)""#),
-        "d" => regex!(r#"(?-u:\b)d\s*=\s*"([^"]*)""#),
-        "transform" => regex!(r#"(?-u:\b)transform\s*=\s*"([^"]*)""#),
-        "viewBox" => regex!(r#"(?-u:\b)viewBox\s*=\s*"([^"]*)""#),
-        "data-tech" => regex!(r#"(?-u:\b)data-tech\s*=\s*"([^"]*)""#),
-        "text-anchor" => regex!(r#"(?-u:\b)text-anchor\s*=\s*"([^"]*)""#),
-        other => {
-            let re = Regex::new(&format!(
-                r#"(?-u:\b){}\s*=\s*"([^"]*)""#,
-                regex::escape(other)
-            ))
-            .ok()?;
-            return re.captures(el).map(|c| c[1].to_string());
+fn ascii_word(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// `(?-u:\b){name}\s*=\s*"([^"]*)"`, first match. A byte scan: the regex
+/// engine's backtracker was the hot path on a large diagram.
+fn attribute<'a>(el: &'a str, name: &str) -> Option<&'a str> {
+    if name.is_empty() {
+        return None;
+    }
+    let starts_word = name.chars().next().is_some_and(ascii_word);
+    let mut rest = el;
+    while let Some(at) = find_needle(rest, name) {
+        let boundary = match rest[..at].chars().next_back() {
+            None => starts_word,
+            Some(c) => ascii_word(c) != starts_word,
+        };
+        if boundary {
+            let after = rest[at + name.len()..].trim_start_matches(char::is_whitespace);
+            if let Some(after) = after.strip_prefix('=') {
+                let after = after.trim_start_matches(char::is_whitespace);
+                if let Some(value) = after.strip_prefix('"') {
+                    if let Some(end) = value.find('"') {
+                        return Some(&value[..end]);
+                    }
+                }
+            }
         }
-    };
-    re.captures(el).map(|c| c[1].to_string())
+        let step = rest[at..].chars().next().map_or(1, char::len_utf8);
+        rest = &rest[at + step..];
+    }
+    None
+}
+
+/// `(?-u:\b)word(?-u:\b)` inside `hay`.
+fn has_ascii_word(hay: &str, word: &str) -> bool {
+    let bytes = hay.as_bytes();
+    let needle = word.as_bytes();
+    if needle.is_empty() || !ascii_word(word.chars().next().unwrap()) {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(rel) = find_needle(&hay[from..], word) {
+        let at = from + rel;
+        let before = at == 0 || !ascii_word(bytes[at - 1] as char);
+        let after_i = at + needle.len();
+        let after = after_i >= bytes.len() || !ascii_word(bytes[after_i] as char);
+        if before && after {
+            return true;
+        }
+        from = at + 1;
+        while from < hay.len() && !hay.is_char_boundary(from) {
+            from += 1;
+        }
+    }
+    false
+}
+
+fn class_of(tag: &str) -> Option<&str> {
+    attribute(tag, "class")
+}
+
+/// `<name` with an ASCII word boundary after the name, then the element
+/// through `end_tag` (inclusive). Non-greedy, same as `[\s\S]*?`.
+fn elements<'a>(html: &'a str, open: &str, end_tag: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = find_needle(&html[from..], open) {
+        let at = from + rel;
+        let after = at + open.len();
+        let boundary = after >= html.len() || !ascii_word(html.as_bytes()[after] as char);
+        if !boundary {
+            from = at + 1;
+            continue;
+        }
+        let Some(end_rel) = find_needle(&html[after..], end_tag) else {
+            break;
+        };
+        let end = after + end_rel + end_tag.len();
+        out.push(&html[at..end]);
+        from = end;
+    }
+    out
 }
 
 fn number_attribute(el: &str, name: &str) -> f64 {
-    let value = attribute(el, name).map_or(f64::NAN, |raw| js::parse_float(&raw));
+    let value = attribute(el, name).map_or(f64::NAN, js::parse_float);
     if value.is_finite() {
         value
     } else {
@@ -149,8 +230,8 @@ fn number_attribute(el: &str, name: &str) -> f64 {
 
 fn transform_of(el: &str) -> Option<Placement> {
     let raw = attribute(el, "transform").filter(|raw| !raw.is_empty())?;
-    let r#move = regex!(r"translate\(\s*(-?[0-9.]+)[ ,]+(-?[0-9.]+)\s*\)").captures(&raw)?;
-    let zoom = regex!(r"scale\(\s*(-?[0-9.]+)\s*\)").captures(&raw)?;
+    let r#move = regex!(r"translate\(\s*(-?[0-9.]+)[ ,]+(-?[0-9.]+)\s*\)").captures(raw)?;
+    let zoom = regex!(r"scale\(\s*(-?[0-9.]+)\s*\)").captures(raw)?;
     Some(Placement {
         x: js::parse_float(&r#move[1]),
         y: js::parse_float(&r#move[2]),
@@ -159,6 +240,9 @@ fn transform_of(el: &str) -> Option<Placement> {
 }
 
 fn decoded_text(raw: &str) -> String {
+    if !raw.as_bytes().contains(&b'&') {
+        return raw.to_string();
+    }
     regex!(r"&(?:[a-z]+|#[0-9]+|#[xX][0-9a-fA-F]+);")
         .replace_all(raw, "x")
         .into_owned()
@@ -219,29 +303,59 @@ fn view_box_of(svg: &str) -> Option<ViewBox> {
     })
 }
 
+fn path_command(b: u8) -> bool {
+    matches!(
+        b,
+        b'M' | b'L' | b'H' | b'V' | b'Z' | b'm' | b'l' | b'h' | b'v' | b'z'
+    )
+}
+
 fn segments_of(d: &str) -> Option<Vec<Segment>> {
-    let tokens: Vec<&str> = regex!("[MLHVZmlhvz][^MLHVZmlhvz]*")
-        .find_iter(d)
-        .map(|m| m.as_str())
-        .collect();
-    if tokens.is_empty() {
-        return None;
-    }
+    let bytes = d.as_bytes();
+    let mut i = 0;
+    let mut saw = false;
     let (mut cursor_x, mut cursor_y) = (0.0, 0.0);
     let mut segments = Vec::new();
-    for token in tokens {
-        let command = token.chars().next()?;
+    while i < bytes.len() {
+        if !path_command(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        saw = true;
+        let command = bytes[i] as char;
+        i += 1;
         if command.is_ascii_lowercase() {
             return None;
         }
         if command == 'Z' {
             continue;
         }
-        let args: Vec<f64> = regex!(r"-?[0-9]*\.?[0-9]+")
-            .find_iter(&token[1..])
-            .map(|m| js::number(m.as_str()))
-            .collect();
-        let arg = |i: usize| args.get(i).copied().unwrap_or(f64::NAN);
+        let mut args = Vec::new();
+        while i < bytes.len() && !path_command(bytes[i]) {
+            if bytes[i] == b'-' || bytes[i].is_ascii_digit() || bytes[i] == b'.' {
+                let start = i;
+                if bytes[i] == b'-' {
+                    i += 1;
+                }
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i < bytes.len() && bytes[i] == b'.' {
+                    i += 1;
+                    while i < bytes.len() && bytes[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                }
+                if i > start {
+                    args.push(js::number(&d[start..i]));
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        let arg = |k: usize| args.get(k).copied().unwrap_or(f64::NAN);
         if args.is_empty() {
             return None;
         }
@@ -264,6 +378,9 @@ fn segments_of(d: &str) -> Option<Vec<Segment>> {
         cursor_x = x;
         cursor_y = y;
     }
+    if !saw {
+        return None;
+    }
     Some(segments)
 }
 
@@ -284,20 +401,90 @@ fn dimension(geometry: &Value, key: &str, fallback: f64) -> f64 {
     }
 }
 
+fn element_inner(el: &str) -> &str {
+    let start = el.find('>').map_or(0, |i| i + 1);
+    let end = el.rfind('<').unwrap_or(el.len());
+    if end > start {
+        &el[start..end]
+    } else {
+        ""
+    }
+}
+
+fn opening_tag(el: &str) -> &str {
+    let end = el.find('>').unwrap_or(el.len());
+    &el[..end]
+}
+
+fn earlier_word<'a>(class: &'a str, words: &[&'a str]) -> Option<&'a str> {
+    words
+        .iter()
+        .filter_map(|word| {
+            class
+                .match_indices(word)
+                .find(|(at, _)| {
+                    let bytes = class.as_bytes();
+                    let before = *at == 0 || !ascii_word(bytes[*at - 1] as char);
+                    let after = *at + word.len();
+                    let after_ok = after >= bytes.len() || !ascii_word(bytes[after] as char);
+                    before && after_ok
+                })
+                .map(|(at, _)| (at, *word))
+        })
+        .min_by_key(|(at, _)| *at)
+        .map(|(_, word)| word)
+}
+
+fn has_edge_class(class: &str) -> bool {
+    let bytes = class.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = find_needle(&class[from..], "edge-") {
+        let at = from + rel;
+        if at == 0 || !ascii_word(bytes[at - 1] as char) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+fn has_paint_attr(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        for name in ["fill", "stroke", "color", "style"] {
+            let n = name.len();
+            if i + n <= bytes.len() && bytes[i..i + n].eq_ignore_ascii_case(name.as_bytes()) {
+                let before = i == 0 || !ascii_word(bytes[i - 1] as char);
+                let after = i + n;
+                let after_ok = after >= bytes.len() || !ascii_word(bytes[after] as char);
+                if before && after_ok {
+                    let rest = raw[after..].trim_start_matches(char::is_whitespace);
+                    if rest.starts_with('=') {
+                        return true;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 fn parse_diagram(svg: &str, fonts: &StatedFontSizes, geometry: &Value) -> Diagram {
     let view_box = view_box_of(svg);
-    let title = regex!(r"<title[^>]*>([\s\S]*?)</title>").captures(svg);
+    let title = elements(svg, "<title", "</title>")
+        .into_iter()
+        .next()
+        .map(element_inner);
     let mut nodes = Vec::new();
-    for block in regex!(r"<a(?-u:\b)[\s\S]*?</a>")
-        .find_iter(svg)
-        .map(|m| m.as_str())
-    {
-        let Some(rect) =
-            regex!(r#"<rect(?-u:\b)[^>]*class="[^"]*(?-u:\b)tile(?-u:\b)[^"]*"[^>]*>"#).find(block)
-        else {
+    for block in elements(svg, "<a", "</a>") {
+        let Some(rect) = elements(block, "<rect", ">").into_iter().find(|tag| {
+            class_of(opening_tag(tag)).is_some_and(|class| has_ascii_word(class, "tile"))
+        }) else {
             continue;
         };
-        let tile = box_of(rect.as_str());
+        let tile = box_of(rect);
         let centre = tile.x + tile.width / 2.0;
         let width = dimension(geometry, "footprintWidth", tile.width);
         let height = dimension(geometry, "footprintHeight", tile.height);
@@ -309,44 +496,58 @@ fn parse_diagram(svg: &str, fonts: &StatedFontSizes, geometry: &Value) -> Diagra
         };
 
         let mut labels = Vec::new();
-        let label_re = regex!(
-            r#"<text(?-u:\b)[^>]*class="[^"]*(?-u:\b)node-(title|subtitle)(?-u:\b)[^"]*"[^>]*>([^<]*)</text>"#
-        );
-        for caps in label_re.captures_iter(block) {
-            let class_name = match &caps[1] {
-                "title" => "node-title",
-                "subtitle" => "node-subtitle",
-                _ => continue,
+        for el in elements(block, "<text", "</text>") {
+            let tag = opening_tag(el);
+            let Some(class) = class_of(tag) else { continue };
+            let Some(kind_word) = earlier_word(class, &["node-title", "node-subtitle"]) else {
+                continue;
+            };
+            let class_name = kind_word;
+            let kind = if kind_word == "node-title" {
+                "title"
+            } else {
+                "subtitle"
             };
             let Some(font_size) = fonts.for_class(class_name) else {
                 continue;
             };
             labels.push(NodeLabel {
-                kind: caps[1].to_string(),
-                chars: js_len(&decoded_text(&caps[2])),
+                kind: kind.to_string(),
+                chars: js_len(&decoded_text(element_inner(el))),
                 font_size,
             });
         }
 
-        let logo =
-            regex!(r#"<g(?-u:\b)[^>]*class="[^"]*(?-u:\b)tile-logo(?-u:\b)[^"]*"[\s\S]*?</g>"#)
-                .find(block)
-                .map(|found| {
-                    let raw = found.as_str();
-                    let group = regex!(r"^<g(?-u:\b)[^>]*>")
-                        .find(raw)
-                        .map_or("", |m| m.as_str());
-                    Logo {
-                        slug: attribute(group, "data-tech"),
-                        has_colour: regex!(r"(?i)(?-u:\b)(?:fill|stroke|color|style)\s*=")
-                            .is_match(raw),
-                        path: regex!(r#"<path(?-u:\b)[^>]*(?-u:\b)d\s*=\s*"([^"]*)""#)
-                            .captures(raw)
-                            .map(|c| c[1].to_string()),
-                        placed: transform_of(group),
-                    }
+        let logo = elements(block, "<g", "</g>")
+            .into_iter()
+            .find(|el| {
+                class_of(opening_tag(el)).is_some_and(|class| has_ascii_word(class, "tile-logo"))
+            })
+            .map(|raw| {
+                let group = opening_tag(raw);
+                let path = elements(raw, "<path", ">").into_iter().find_map(|tag| {
+                    attribute(tag, "d")
+                        .filter(|d| !d.is_empty())
+                        .map(str::to_string)
                 });
-        let kind_code = regex!(r#"class="[^"]*(?-u:\b)tile-mark(?-u:\b)"#).is_match(block);
+                Logo {
+                    slug: attribute(group, "data-tech").map(str::to_string),
+                    has_colour: has_paint_attr(raw),
+                    path,
+                    placed: transform_of(group),
+                }
+            });
+        let kind_code = elements(block, "<text", "</text>")
+            .iter()
+            .chain(std::iter::once(&block))
+            .any(|el| {
+                class_of(opening_tag(el)).is_some_and(|class| has_ascii_word(class, "tile-mark"))
+                    || el.match_indices("class=\"").any(|(i, _)| {
+                        let value = &el[i + 7..];
+                        let value = &value[..value.find('"').unwrap_or(value.len())];
+                        has_ascii_word(value, "tile-mark")
+                    })
+            });
         nodes.push(Node {
             footprint,
             tile,
@@ -357,26 +558,31 @@ fn parse_diagram(svg: &str, fonts: &StatedFontSizes, geometry: &Value) -> Diagra
     }
 
     let mut edges = Vec::new();
-    for found in regex!(r#"<path(?-u:\b)[^>]*class="[^"]*(?-u:\b)edge-[^"]*"[^>]*"#).find_iter(svg)
-    {
-        let Some(d) = attribute(found.as_str(), "d").filter(|d| !d.is_empty()) else {
+    for found in elements(svg, "<path", ">") {
+        if !class_of(opening_tag(found)).is_some_and(has_edge_class) {
+            continue;
+        }
+        let Some(d) = attribute(found, "d").filter(|d| !d.is_empty()) else {
             continue;
         };
-        let segments = segments_of(&d);
-        edges.push(Edge { d, segments });
+        let segments = segments_of(d);
+        edges.push(Edge {
+            d: d.to_string(),
+            segments,
+        });
     }
 
     let mut labels = Vec::new();
-    let text_re = regex!(
-        r#"<text(?-u:\b)[^>]*class="[^"]*(?-u:\b)(edge-label|boundary-label)(?-u:\b)[^"]*"[^>]*>([^<]*)</text>"#
-    );
-    for caps in text_re.captures_iter(svg) {
-        let Some(font_size) = fonts.for_class(&caps[1]) else {
+    for el in elements(svg, "<text", "</text>") {
+        let tag = opening_tag(el);
+        let Some(class) = class_of(tag) else { continue };
+        let Some(kind) = earlier_word(class, &["edge-label", "boundary-label"]) else {
             continue;
         };
-        let kind = caps[1].to_string();
-        let tag = &caps[0];
-        let content = decoded_text(&caps[2]);
+        let Some(font_size) = fonts.for_class(kind) else {
+            continue;
+        };
+        let content = decoded_text(element_inner(el));
         labels.push(Label {
             chars: js_len(&content),
             content,
@@ -385,12 +591,13 @@ fn parse_diagram(svg: &str, fonts: &StatedFontSizes, geometry: &Value) -> Diagra
             y: number_attribute(tag, "y"),
             anchor: attribute(tag, "text-anchor")
                 .filter(|a| !a.is_empty())
-                .unwrap_or_else(|| "start".into()),
-            kind,
+                .unwrap_or("start")
+                .to_string(),
+            kind: kind.to_string(),
         });
     }
 
-    let name = title.map_or_else(|| "diagram".into(), |c| c[1].trim().to_string());
+    let name = title.map_or_else(|| "diagram".into(), |c| c.trim().to_string());
     Diagram {
         view_box,
         name,
@@ -523,6 +730,42 @@ mod tests {
         );
         assert!(segments_of("m1 1 l2 2").is_none());
         assert!(segments_of("no commands").is_none());
+    }
+
+    #[test]
+    fn tile_x_is_not_taken_from_a_longer_attribute() {
+        let html = r#"<svg viewBox="0 0 9 9"><a><rect class="tile" rx="12" x="90" y="2" width="3" height="4"/></a></svg>"#;
+        let tile = &parse_diagrams(html, &Value::Null)[0].nodes[0].tile;
+        assert_eq!((tile.x, tile.y, tile.width), (90.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn the_first_word_bounded_attribute_wins() {
+        let html = r#"<svg viewBox="0 0 9 9"><a><rect class="tile" data-x="1" x="90" y="2" width="3" height="4"/></a></svg>"#;
+        let tile = &parse_diagrams(html, &Value::Null)[0].nodes[0].tile;
+        assert_eq!(tile.x, 1.0);
+    }
+
+    #[test]
+    fn attributes_allow_whitespace_around_equals() {
+        let html = r#"<svg viewBox="0 0 9 9"><a><rect class="tile" x = "15" y="2" width="3" height="4"/></a></svg>"#;
+        let tile = &parse_diagrams(html, &Value::Null)[0].nodes[0].tile;
+        assert_eq!(tile.x, 15.0);
+    }
+
+    #[test]
+    fn a_single_quoted_attribute_is_not_a_value() {
+        let html = r#"<svg viewBox="0 0 9 9"><a><rect class="tile" x='15' y="2" width="3" height="4"/></a></svg>"#;
+        let tile = &parse_diagrams(html, &Value::Null)[0].nodes[0].tile;
+        assert!(tile.x.is_nan());
+        assert_eq!(tile.y, 2.0);
+    }
+
+    #[test]
+    fn an_underscore_glues_the_attribute_name() {
+        let html = r#"<svg viewBox="0 0 9 9"><a><rect class="tile" _x="3" x="90" y="2" width="3" height="4"/></a></svg>"#;
+        let tile = &parse_diagrams(html, &Value::Null)[0].nodes[0].tile;
+        assert_eq!(tile.x, 90.0);
     }
 
     #[test]

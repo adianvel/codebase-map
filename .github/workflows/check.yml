@@ -20,3 +20,5 @@ jobs:
         run: cargo test
       - name: Check the example report
         run: cargo run --release --bin check-report -- examples/tiny-app/reports/codebase-map/tiny-app
+      - name: Speed of the 200-node report
+        run: cargo test --release --test speed -- --nocapture

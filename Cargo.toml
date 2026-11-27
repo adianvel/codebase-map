@@ -11,9 +11,23 @@ name = "check-report"
 path = "src/main.rs"
 
 [dependencies]
+memchr = "2"
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+criterion = "0.5"
+pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
+
+[[bench]]
+name = "verify_report"
+harness = false
 
 [profile.release]
 lto = true
 strip = true
+
+[profile.bench]
+inherits = "release"
+debug = true
+strip = false

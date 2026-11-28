@@ -4,7 +4,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use codebase_map::{verify_report, Contract, REQUIRED_FILES};
+use codebase_map::{verify_report, verify_report_phases, Contract, PhaseNanos, REQUIRED_FILES};
 use serde_json::{json, Value};
 
 const EXAMPLE: &str = concat!(
@@ -105,6 +105,39 @@ fn release_200_node_map_stays_under_three_milliseconds() {
         ms < 3.0,
         "200-node verify_report averaged {ms:.3} ms, regression guard is 3 ms"
     );
+}
+
+#[test]
+fn release_200_node_phase_split() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let contract = Contract::embedded();
+    let big = big_bundle(200);
+    for _ in 0..3 {
+        black_box(verify_report_phases(black_box(&big), black_box(&contract)));
+    }
+    let iters = 30u32;
+    let mut acc = PhaseNanos::default();
+    for _ in 0..iters {
+        let (errors, phases) = verify_report_phases(black_box(&big), black_box(&contract));
+        assert!(errors.is_empty(), "{errors:?}");
+        acc += phases;
+    }
+    let ms = |n: u64| n as f64 / 1e6 / f64::from(iters);
+    eprintln!(
+        "phases json={:.3} index={:.3} html={:.3} parse={:.3} layout={:.3} marks={:.3} palette={:.3} rest={:.3} total={:.3}",
+        ms(acc.json),
+        ms(acc.index),
+        ms(acc.html),
+        ms(acc.parse),
+        ms(acc.layout),
+        ms(acc.marks),
+        ms(acc.palette),
+        ms(acc.rest),
+        ms(acc.total())
+    );
+    assert!(acc.parse > 0 && acc.json > 0 && acc.html > 0);
 }
 
 #[test]

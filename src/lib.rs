@@ -6,4 +6,4 @@ mod diagram;
 mod js;
 mod verifier;
 
-pub use verifier::{verify_report, Contract, REQUIRED_FILES};
+pub use verifier::{verify_report, verify_report_phases, Contract, PhaseNanos, REQUIRED_FILES};

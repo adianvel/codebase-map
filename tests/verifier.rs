@@ -161,6 +161,24 @@ fn the_first_stated_font_size_is_the_one_that_counts() {
 }
 
 #[test]
+fn a_later_rule_supplies_font_size_when_the_first_block_has_none() {
+    let html = example()["architecture.html"]
+        .as_str()
+        .unwrap()
+        .replacen(
+            ".node-title {\n      fill: var(--text);\n      font-size: 13px;\n",
+            ".node-title {\n      fill: var(--text);\n",
+            1,
+        )
+        .replacen("</style>", ".node-title { font-size: 99px; }</style>", 1);
+    let errors = errors_with("architecture.html", Value::String(html));
+    assert!(
+        errors.iter().any(|e| e.contains("characters")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn a_label_without_a_stated_font_size_is_not_budgeted() {
     let html = example()["architecture.html"].as_str().unwrap().replacen(
         ".node-title {\n      fill: var(--text);\n      font-size: 13px;\n",

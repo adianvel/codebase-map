@@ -95,6 +95,46 @@ fn list(values: &[&str]) -> String {
     values.join(", ")
 }
 
+/// Nanoseconds spent in each part of one `verify_report_phases` call.
+/// `verify_report` does not collect these, so the check itself stays the same.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PhaseNanos {
+    pub json: u64,
+    pub index: u64,
+    pub html: u64,
+    pub parse: u64,
+    pub layout: u64,
+    pub marks: u64,
+    pub palette: u64,
+    pub rest: u64,
+}
+
+impl PhaseNanos {
+    pub fn total(self) -> u64 {
+        self.json
+            + self.index
+            + self.html
+            + self.parse
+            + self.layout
+            + self.marks
+            + self.palette
+            + self.rest
+    }
+}
+
+impl std::ops::AddAssign for PhaseNanos {
+    fn add_assign(&mut self, rhs: Self) {
+        self.json += rhs.json;
+        self.index += rhs.index;
+        self.html += rhs.html;
+        self.parse += rhs.parse;
+        self.layout += rhs.layout;
+        self.marks += rhs.marks;
+        self.palette += rhs.palette;
+        self.rest += rhs.rest;
+    }
+}
+
 /// Validate a Report Bundle (file name to contents) and return every problem,
 /// in a stable order. An empty list is a passing report.
 pub fn verify_report(bundle: &Value, contract: &Contract) -> Vec<String> {
@@ -161,6 +201,106 @@ pub fn verify_report(bundle: &Value, contract: &Contract) -> Vec<String> {
     check_secrets(bundle, &mut errors);
     check_context_budget(bundle, &mut errors);
     errors
+}
+
+/// Same check as `verify_report`, plus time spent in each part.
+/// The timed path is separate so the check used by `check-report` is unchanged.
+pub fn verify_report_phases(bundle: &Value, contract: &Contract) -> (Vec<String>, PhaseNanos) {
+    verify_inner(bundle, contract)
+}
+
+fn verify_inner(bundle: &Value, contract: &Contract) -> (Vec<String>, PhaseNanos) {
+    let Some(bundle) = bundle.as_object() else {
+        return (
+            vec!["report bundle must be an object".into()],
+            PhaseNanos::default(),
+        );
+    };
+    let mut errors = Vec::new();
+    let mut phases = PhaseNanos::default();
+    let file = |name: &str| bundle.get(name).filter(|v| !v.is_null());
+
+    macro_rules! section {
+        ($field:ident, $body:expr) => {{
+            let started = std::time::Instant::now();
+            let value = $body;
+            phases.$field = phases
+                .$field
+                .saturating_add(started.elapsed().as_nanos() as u64);
+            value
+        }};
+    }
+
+    for name in REQUIRED_FILES {
+        if file(name).is_none() {
+            errors.push(format!("missing report file: {name}"));
+        }
+    }
+
+    let mut index: Option<Value> = None;
+    section!(json, {
+        match file("index.json") {
+            None => {}
+            Some(Value::String(raw)) => match serde_json::from_str::<Value>(raw) {
+                Ok(parsed) => index = Some(parsed),
+                Err(error) => errors.push(format!("index.json is not valid JSON: {error}")),
+            },
+            Some(raw @ Value::Object(_)) => index = Some(raw.clone()),
+            Some(_) => errors.push("index.json must be an object".into()),
+        }
+        index = index.filter(truthy);
+    });
+
+    let mut concept_ids = None;
+    section!(index, {
+        if let Some(index) = &index {
+            match index.as_object() {
+                Some(object) => concept_ids = Some(check_index(object, &mut errors)),
+                None => errors.push("index.json must be an object".into()),
+            }
+        }
+    });
+
+    if let Some(Value::String(html)) = file("architecture.html") {
+        section!(html, check_html(html, concept_ids.as_ref(), &mut errors));
+
+        let geometry = contract.geometry.as_ref().filter(|g| truthy(g));
+        if geometry.is_none() {
+            errors.push(
+                "diagram geometry was not supplied; layout cannot be verified against docs/diagram-geometry.json".into(),
+            );
+        }
+        let diagrams = section!(
+            parse,
+            parse_diagrams(html, geometry.unwrap_or(&Value::Null))
+        );
+        if let Some(geometry) = geometry {
+            section!(layout, check_layout(&diagrams, geometry, &mut errors));
+        }
+
+        let marks = contract.marks.as_ref().filter(|m| !m.is_null());
+        section!(marks, {
+            let backed = index
+                .as_ref()
+                .map(|index| detect_technologies(index, marks));
+            check_marks(&diagrams, &mut errors, marks, backed.as_ref());
+        });
+
+        section!(palette, {
+            match contract.template_html.as_deref().filter(|t| !t.is_empty()) {
+                None => errors.push(
+                    "report template was not supplied; palette cannot be verified against docs/report-template.html".into(),
+                ),
+                Some(template) => check_palette(html, template, &mut errors),
+            }
+        });
+    }
+
+    section!(rest, {
+        check_secrets(bundle, &mut errors);
+        check_context_budget(bundle, &mut errors);
+    });
+    (errors, phases)
 }
 
 /// `head.field`, formatted only when an error is actually reported.

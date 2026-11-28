@@ -2,6 +2,9 @@
 //!
 //!   cargo bench --bench verify_report
 //!   cargo bench --bench verify_report -- --profile-time 5
+//!
+//! Phase means (json, parse, html, layout, marks) are printed by
+//! `cargo test --release --test speed -- phase_split --nocapture`.
 
 use std::hint::black_box;
 
